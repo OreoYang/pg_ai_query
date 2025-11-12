@@ -1,6 +1,7 @@
-comment = 'AI-powered natural language to SQL extension'
+# pg_ai_query extension
+comment = 'AI-powered SQL query generation for PostgreSQL'
 default_version = '1.0'
 module_pathname = '$libdir/pg_ai_query'
 relocatable = true
 requires = ''
-trusted = false # Only superuser is allowed to install
+superuser = true

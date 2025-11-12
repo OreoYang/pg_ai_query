@@ -17,12 +17,21 @@ execute_process(COMMAND ${PG_CONFIG} --bindir OUTPUT_VARIABLE PG_BINDIR OUTPUT_S
 include_directories(${PG_INCLUDE_SERVER})
 include_directories(${PG_INCLUDE})
 
-# TODO: Add ai-sdk-cpp when dependencies are resolved
-# For now, we'll build without the AI SDK and add it later
+# Configure ai-sdk-cpp options
+set(AI_SDK_BUILD_EXAMPLES OFF CACHE BOOL "")
+set(AI_SDK_BUILD_TESTS OFF CACHE BOOL "")
 
-# Source files
+# Add the ai-sdk-cpp submodule
+add_subdirectory(third_party/ai-sdk-cpp)
+
+# Include our source directories
+include_directories(src)
+
+# Source files for the clean implementation
 set(SOURCES
     src/pg_ai_query.cpp
+    src/core/query_generator.cpp
+    src/core/logger.cpp
 )
 
 # Create module library for PostgreSQL extension
@@ -42,11 +51,21 @@ else()
     )
 endif()
 
-# TODO: Link with ai-sdk-cpp when available
-# target_link_libraries(pg_ai_query PRIVATE ai-sdk-cpp)
-# target_include_directories(pg_ai_query PRIVATE
-#     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/ai-sdk-cpp/include
-# )
+# Link with ai-sdk-cpp
+target_link_libraries(pg_ai_query PRIVATE
+    ai-sdk-cpp
+)
+
+# Include directories
+target_include_directories(pg_ai_query PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/ai-sdk-cpp/include
+)
+
+# Add compile definitions
+target_compile_definitions(pg_ai_query PRIVATE
+    USE_POSTGRESQL_ELOG
+)
 
 # Install target
 install(TARGETS pg_ai_query
@@ -61,3 +80,14 @@ install(FILES sql/pg_ai_query--1.0.sql
 install(FILES pg_ai_query.control
     DESTINATION ${PG_PKGLIB}/../extension/
 )
+
+# Optional: Build logger test (not built by default)
+# Uncomment to build: cmake .. -DBUILD_LOGGER_TEST=ON
+option(BUILD_LOGGER_TEST "Build logger test executable" OFF)
+if(BUILD_LOGGER_TEST)
+    add_executable(test_logger
+        src/test_logger.cpp
+        src/core/logger.cpp
+    )
+    target_include_directories(test_logger PRIVATE src)
+endif()
