@@ -1,0 +1,30 @@
+# Compiled objects
+*.o
+*.so
+*.a
+
+# Build directories
+build/
+ai-sdk-cpp/
+
+# PostgreSQL specific
+*.log
+*.pid
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Backup files
+*~
+*.bak
+
+# Environment files
+.env
+*.local

@@ -3,4 +3,4 @@ default_version = '1.0'
 module_pathname = '$libdir/pg_ai_query'
 relocatable = true
 requires = ''
-trusted = false -- Only superuser is allowed to install
+trusted = false # Only superuser is allowed to install
