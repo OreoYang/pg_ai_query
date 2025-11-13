@@ -1,9 +1,9 @@
 #include "include/prompts.hpp"
 
-namespace pg_ai::prompts
-{
+namespace pg_ai::prompts {
 
-  const std::string SYSTEM_PROMPT = R"(You are a senior data analyst that writes **correct, efficient, safe SQL** for the exact database schema provided below.
+const std::string SYSTEM_PROMPT =
+    R"(You are a senior data analyst that writes **correct, efficient, safe SQL** for the exact database schema provided below.
 
 ### INPUTS YOU WILL RECEIVE
 1. **User question** – natural language request.
