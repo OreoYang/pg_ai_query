@@ -1,0 +1,256 @@
+name: Code Formatting
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  format-check:
+    name: Check Code Formatting
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install clang-format
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y clang-format-15
+
+    - name: Check C++ formatting
+      run: |
+        echo "Checking C++ code formatting..."
+
+        # Check if .clang-format exists, if not skip formatting
+        if [ ! -f .clang-format ]; then
+          echo "No .clang-format file found, skipping C++ formatting"
+          exit 0
+        fi
+
+        # Find all C++ source files
+        CPP_FILES=$(find src -name "*.cpp" -o -name "*.hpp" -o -name "*.h" 2>/dev/null || true)
+
+        if [ -z "$CPP_FILES" ]; then
+          echo "No C++ files found to format"
+          exit 0
+        fi
+
+        # Check formatting
+        echo "Files to check:"
+        echo "$CPP_FILES"
+
+        UNFORMATTED_FILES=""
+        for file in $CPP_FILES; do
+          echo "Checking $file..."
+          if ! clang-format-15 --dry-run --Werror "$file" > /dev/null 2>&1; then
+            UNFORMATTED_FILES="$UNFORMATTED_FILES $file"
+          fi
+        done
+
+        if [ -n "$UNFORMATTED_FILES" ]; then
+          echo "ERROR: The following files need formatting:"
+          for file in $UNFORMATTED_FILES; do
+            echo "  - $file"
+          done
+          echo ""
+          echo "To fix formatting issues, run:"
+          echo "  clang-format -i $UNFORMATTED_FILES"
+          exit 1
+        else
+          echo "All C++ files are properly formatted"
+        fi
+
+    - name: Check SQL formatting
+      run: |
+        echo "Checking SQL formatting..."
+
+        # Install sqlformat (part of sqlparse)
+        pip install sqlparse
+
+        # Find SQL files
+        SQL_FILES=$(find . -name "*.sql" -not -path "./.git/*" -not -path "./build/*" 2>/dev/null || true)
+
+        if [ -z "$SQL_FILES" ]; then
+          echo "No SQL files found to check"
+          exit 0
+        fi
+
+        echo "SQL files to check:"
+        echo "$SQL_FILES"
+
+        # Basic SQL validation
+        for file in $SQL_FILES; do
+          echo "Checking $file..."
+          if ! python -c "
+        import sqlparse
+        import sys
+        with open('$file', 'r') as f:
+            content = f.read()
+        try:
+            parsed = sqlparse.parse(content)
+            if not parsed:
+                sys.exit(1)
+        except Exception as e:
+            print(f'Error parsing SQL: {e}')
+            sys.exit(1)
+        print('SQL syntax is valid')
+        "; then
+            echo "ERROR: SQL syntax error in $file"
+            exit 1
+          fi
+        done
+
+  auto-format:
+    name: Auto-format Code (on push to main)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: format-check
+    # Only run if format-check failed (meaning there are formatting issues)
+    # We'll make this conditional in the steps instead
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Install clang-format
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y clang-format-15
+
+    - name: Format C++ code
+      run: |
+        echo "Auto-formatting C++ code..."
+
+        # Check if .clang-format exists
+        if [ ! -f .clang-format ]; then
+          echo "No .clang-format file found, skipping C++ formatting"
+          exit 0
+        fi
+
+        # Find and format C++ files
+        CPP_FILES=$(find src -name "*.cpp" -o -name "*.hpp" -o -name "*.h" 2>/dev/null || true)
+
+        if [ -n "$CPP_FILES" ]; then
+          echo "Formatting C++ files:"
+          echo "$CPP_FILES"
+          clang-format-15 -i $CPP_FILES
+        else
+          echo "No C++ files to format"
+        fi
+
+    - name: Check for changes
+      id: verify-changed-files
+      run: |
+        if [ -n "$(git status --porcelain)" ]; then
+          echo "changed=true" >> $GITHUB_OUTPUT
+          echo "Files were formatted:"
+          git status --porcelain
+        else
+          echo "changed=false" >> $GITHUB_OUTPUT
+          echo "No formatting changes needed"
+        fi
+
+    - name: Commit formatted code
+      if: steps.verify-changed-files.outputs.changed == 'true'
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add -A
+        git commit -m "Auto-format code with clang-format
+
+        Automated formatting applied by GitHub Actions" || exit 0
+
+    - name: Push changes
+      if: steps.verify-changed-files.outputs.changed == 'true'
+      uses: ad-m/github-push-action@master
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        branch: main
+
+  markdown-lint:
+    name: Lint Markdown Files
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+
+    - name: Install markdownlint
+      run: npm install -g markdownlint-cli
+
+    - name: Create markdownlint config
+      run: |
+        cat > .markdownlint.json << EOF
+        {
+          "MD013": { "line_length": 120 },
+          "MD033": false,
+          "MD041": false
+        }
+        EOF
+
+    - name: Lint markdown files
+      run: |
+        echo "Linting markdown files..."
+        MARKDOWN_FILES=$(find . -name "*.md" -not -path "./.git/*" -not -path "./node_modules/*" -not -path "./build/*" 2>/dev/null || true)
+
+        if [ -z "$MARKDOWN_FILES" ]; then
+          echo "No markdown files found to lint"
+          exit 0
+        fi
+
+        echo "Markdown files to lint:"
+        echo "$MARKDOWN_FILES"
+
+        markdownlint $MARKDOWN_FILES
+
+  yaml-lint:
+    name: Lint YAML Files
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install yamllint
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y yamllint
+
+    - name: Create yamllint config
+      run: |
+        cat > .yamllint.yml << EOF
+        extends: default
+        rules:
+          line-length:
+            max: 120
+            level: warning
+          comments:
+            min-spaces-from-content: 1
+          comments-indentation: disable
+          truthy: disable
+        EOF
+
+    - name: Lint YAML files
+      run: |
+        echo "Linting YAML files..."
+        YAML_FILES=$(find . -name "*.yml" -o -name "*.yaml" -not -path "./.git/*" -not -path "./build/*" 2>/dev/null || true)
+
+        if [ -z "$YAML_FILES" ]; then
+          echo "No YAML files found to lint"
+          exit 0
+        fi
+
+        echo "YAML files to lint:"
+        echo "$YAML_FILES"
+
+        yamllint $YAML_FILES

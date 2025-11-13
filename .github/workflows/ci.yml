@@ -1,0 +1,208 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CMAKE_BUILD_TYPE: Release
+
+jobs:
+  build-and-test:
+    name: Build and Test
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        pg_version: ["14", "15", "16"]
+        include:
+          - os: ubuntu-latest
+            pg_package: postgresql-${{ matrix.pg_version }}
+            pg_dev_package: postgresql-server-dev-${{ matrix.pg_version }}
+          - os: macos-latest
+            pg_package: postgresql@${{ matrix.pg_version }}
+            pg_dev_package: postgresql@${{ matrix.pg_version }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        fetch-depth: 0
+
+    - name: Cache dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cache/vcpkg
+          build/_deps
+        key: ${{ runner.os }}-pg${{ matrix.pg_version }}-${{ hashFiles('**/CMakeLists.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pg${{ matrix.pg_version }}-
+
+    - name: Install dependencies (Ubuntu)
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+        wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          cmake \
+          libssl-dev \
+          pkg-config \
+          ${{ matrix.pg_package }} \
+          ${{ matrix.pg_dev_package }}
+
+    - name: Install dependencies (macOS)
+      if: matrix.os == 'macos-latest'
+      run: |
+        brew update
+        brew install cmake openssl pkg-config ${{ matrix.pg_package }}
+
+    - name: Setup PostgreSQL (Ubuntu)
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo systemctl start postgresql
+        sudo -u postgres createuser -s $USER
+        sudo -u postgres createdb testdb
+
+    - name: Setup PostgreSQL (macOS)
+      if: matrix.os == 'macos-latest'
+      run: |
+        brew services start ${{ matrix.pg_package }}
+        sleep 5
+        createdb testdb || true
+
+    - name: Configure CMake
+      run: |
+        if [[ "${{ matrix.os }}" == "macos-latest" ]]; then
+          export PG_CONFIG=$(brew --prefix ${{ matrix.pg_package }})/bin/pg_config
+          export OPENSSL_ROOT_DIR=$(brew --prefix openssl)
+        else
+          export PG_CONFIG=/usr/bin/pg_config
+        fi
+        cmake -B build -DCMAKE_BUILD_TYPE=${{env.CMAKE_BUILD_TYPE}} \
+              -DCMAKE_INSTALL_PREFIX=/tmp/pg_ai_query_install
+
+    - name: Build extension
+      run: |
+        cmake --build build --config ${{env.CMAKE_BUILD_TYPE}} --parallel $(nproc 2>/dev/null || sysctl -n hw.ncpu)
+
+    - name: Run tests
+      run: |
+        # Install extension for testing
+        if [[ "${{ matrix.os }}" == "macos-latest" ]]; then
+          export PG_CONFIG=$(brew --prefix ${{ matrix.pg_package }})/bin/pg_config
+        fi
+        sudo cmake --install build
+
+        # Basic functionality test
+        psql -d testdb -c "CREATE EXTENSION IF NOT EXISTS pg_ai_query;"
+
+        # Test basic functions exist
+        psql -d testdb -c "\\df generate_query"
+        psql -d testdb -c "\\df get_database_tables"
+        psql -d testdb -c "\\df get_table_details"
+
+        # Test with sample data
+        psql -d testdb -c "CREATE TABLE test_users (id SERIAL PRIMARY KEY, name VARCHAR(100));"
+        psql -d testdb -c "INSERT INTO test_users (name) VALUES ('Test User');"
+
+        # Test schema discovery
+        psql -d testdb -c "SELECT get_database_tables();"
+        psql -d testdb -c "SELECT get_table_details('test_users');"
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: build-artifacts-${{ matrix.os }}-pg${{ matrix.pg_version }}
+        path: |
+          build/*.so
+          build/*.dylib
+          build/CMakeCache.txt
+          build/CMakeFiles/CMakeError.log
+        retention-days: 7
+
+  static-analysis:
+    name: Static Analysis
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          cmake \
+          libssl-dev \
+          postgresql-14 \
+          postgresql-server-dev-14 \
+          cppcheck \
+          clang-tidy
+
+    - name: Configure CMake with static analysis
+      run: |
+        cmake -B build -DCMAKE_BUILD_TYPE=Debug \
+              -DCMAKE_CXX_CPPCHECK="cppcheck;--enable=all;--suppress=missingIncludeSystem" \
+              -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+    - name: Run static analysis
+      run: |
+        cmake --build build --target all 2>&1 | tee static-analysis.log
+
+    - name: Run clang-tidy
+      run: |
+        find src -name "*.cpp" -o -name "*.hpp" | head -10 | \
+        xargs clang-tidy -p build --checks='-*,readability-*,performance-*,bugprone-*,modernize-*' \
+        2>&1 | tee clang-tidy.log || true
+
+    - name: Upload analysis results
+      uses: actions/upload-artifact@v3
+      with:
+        name: static-analysis-results
+        path: |
+          static-analysis.log
+          clang-tidy.log
+        retention-days: 30
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+
+    - name: Upload Trivy scan results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v2
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+    - name: Check for secrets
+      uses: trufflesecurity/trufflehog@main
+      with:
+        path: ./
+        base: main
+        head: HEAD
+        extra_args: --debug --only-verified

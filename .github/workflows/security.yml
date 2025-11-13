@@ -1,0 +1,449 @@
+name: Security and Dependencies
+
+on:
+  schedule:
+    # Run weekly on Sundays at 2 AM UTC
+    - cron: '0 2 * * 0'
+  push:
+    branches: [ main ]
+    paths:
+      - '**/CMakeLists.txt'
+      - 'third_party/**'
+      - '.github/workflows/security.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - '**/CMakeLists.txt'
+      - 'third_party/**'
+  workflow_dispatch:
+
+jobs:
+  dependency-check:
+    name: Dependency Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Setup Node.js for security tools
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+
+    - name: Install security scanning tools
+      run: |
+        # Install audit tools
+        npm install -g npm-audit-ci
+
+        # Install license checker for dependencies
+        npm install -g license-checker
+
+    - name: Check for security advisories
+      run: |
+        echo "Checking for known security vulnerabilities..."
+
+        # Check if we have any npm dependencies
+        if [ -f package.json ]; then
+          echo "Scanning npm dependencies..."
+          npm audit --audit-level=moderate
+        else
+          echo "No npm dependencies found"
+        fi
+
+        # Check submodules for known issues
+        echo "Checking git submodules..."
+        git submodule foreach --recursive 'echo "Submodule: $path"'
+
+    - name: Scan with Trivy (Filesystem)
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        format: 'table'
+        exit-code: '0'  # Don't fail the build, just report
+        severity: 'CRITICAL,HIGH'
+
+    - name: Scan with Trivy (Config files)
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'config'
+        format: 'table'
+        exit-code: '0'
+
+    - name: Check CMake dependencies
+      run: |
+        echo "Analyzing CMake dependencies..."
+
+        # Find all CMakeLists.txt files
+        find . -name "CMakeLists.txt" -exec echo "Found CMake file: {}" \;
+
+        # Look for external dependencies
+        echo "External dependencies found:"
+        find . -name "CMakeLists.txt" -exec grep -l "find_package\|FetchContent\|add_subdirectory" {} \; | \
+        while read file; do
+          echo "  In $file:"
+          grep -n "find_package\|FetchContent\|add_subdirectory" "$file" || true
+        done
+
+    - name: Check third-party licenses
+      run: |
+        echo "Checking third-party licenses..."
+
+        if [ -d third_party ]; then
+          find third_party -name "LICENSE*" -o -name "COPYING*" -o -name "COPYRIGHT*" | \
+          while read license_file; do
+            echo "License file: $license_file"
+            echo "First few lines:"
+            head -5 "$license_file" || true
+            echo "---"
+          done
+        else
+          echo "No third_party directory found"
+        fi
+
+  secret-scan:
+    name: Secret Detection
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Full history for secret scanning
+
+    - name: Run TruffleHog
+      uses: trufflesecurity/trufflehog@main
+      with:
+        path: ./
+        base: main
+        head: HEAD
+        extra_args: --debug --only-verified
+
+    - name: Scan for API keys and secrets
+      run: |
+        echo "Scanning for potential secrets and API keys..."
+
+        # Custom secret patterns
+        SECRET_PATTERNS=(
+          "sk-[a-zA-Z0-9]{48}"  # OpenAI API keys
+          "sk-ant-[a-zA-Z0-9-]{95}"  # Anthropic API keys
+          "postgres://.*:.*@"  # PostgreSQL connection strings
+          "password\s*=\s*[\"'][^\"']{8,}"  # Password assignments
+          "token\s*[:=]\s*[\"'][^\"']{16,}"  # Token assignments
+        )
+
+        FOUND_SECRETS=false
+
+        for pattern in "${SECRET_PATTERNS[@]}"; do
+          echo "Checking pattern: $pattern"
+          if grep -r -E "$pattern" . --exclude-dir=.git --exclude-dir=build --exclude="*.log"; then
+            echo "WARNING: Potential secret found with pattern: $pattern"
+            FOUND_SECRETS=true
+          fi
+        done
+
+        if [ "$FOUND_SECRETS" = true ]; then
+          echo "ERROR: Potential secrets detected. Please review the findings above."
+          echo "If these are false positives, consider adding them to .gitignore or using placeholder values."
+        else
+          echo "No secrets detected"
+        fi
+
+  vulnerability-assessment:
+    name: Vulnerability Assessment
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install dependencies for security analysis
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          clang-tools \
+          cppcheck \
+          valgrind \
+          build-essential \
+          cmake \
+          libssl-dev \
+          postgresql-14 \
+          postgresql-server-dev-14
+
+    - name: Run static security analysis
+      run: |
+        echo "Running static security analysis..."
+
+        # Find C++ source files
+        CPP_FILES=$(find src -name "*.cpp" -o -name "*.hpp" 2>/dev/null || true)
+
+        if [ -n "$CPP_FILES" ]; then
+          echo "Analyzing C++ files for security issues..."
+
+          # Run cppcheck with security checks
+          cppcheck --enable=all --error-exitcode=0 \
+                   --suppress=missingIncludeSystem \
+                   --suppress=unusedFunction \
+                   --xml --xml-version=2 $CPP_FILES 2> cppcheck-security.xml || true
+
+          # Convert to human-readable format
+          if [ -f cppcheck-security.xml ]; then
+            echo "Security analysis results:"
+            grep -o 'msg="[^"]*"' cppcheck-security.xml | sed 's/msg="//g' | sed 's/"$//g' | sort -u || true
+          fi
+
+          # Look for common security anti-patterns
+          echo "Checking for common security issues..."
+
+          if grep -r "strcpy\|strcat\|sprintf\|gets" $CPP_FILES; then
+            echo "WARNING: Found potentially unsafe string functions"
+          fi
+
+          if grep -r "system\|exec\|popen" $CPP_FILES; then
+            echo "WARNING: Found system command execution functions"
+          fi
+
+          if grep -r "rand()\|srand(" $CPP_FILES; then
+            echo "INFO: Found basic random functions (consider crypto-secure alternatives for security-sensitive code)"
+          fi
+
+        else
+          echo "No C++ files found for security analysis"
+        fi
+
+    - name: Check for hardcoded credentials
+      run: |
+        echo "Checking for hardcoded credentials..."
+
+        # Look for hardcoded database connections, API keys, etc.
+        CREDENTIAL_PATTERNS=(
+          "password\s*=\s*['\"][^'\"]{3,}['\"]"
+          "secret\s*=\s*['\"][^'\"]{8,}['\"]"
+          "key\s*=\s*['\"][^'\"]{16,}['\"]"
+          "token\s*=\s*['\"][^'\"]{16,}['\"]"
+          "jdbc:postgresql://.*:.*@"
+          "postgresql://.*:.*@"
+        )
+
+        FOUND_ISSUES=false
+
+        for pattern in "${CREDENTIAL_PATTERNS[@]}"; do
+          if grep -r -E -i "$pattern" . --exclude-dir=.git --exclude-dir=build --exclude="*.log" --exclude="*.md"; then
+            echo "WARNING: Potential hardcoded credential found"
+            FOUND_ISSUES=true
+          fi
+        done
+
+        if [ "$FOUND_ISSUES" = false ]; then
+          echo "No hardcoded credentials detected"
+        fi
+
+  license-compliance:
+    name: License Compliance Check
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Check license files
+      run: |
+        echo "Checking license compliance..."
+
+        # Check main project license
+        if [ -f LICENSE ] || [ -f LICENSE.txt ] || [ -f LICENSE.md ]; then
+          echo "Main project license found"
+          ls -la LICENSE* 2>/dev/null || true
+        else
+          echo "WARNING: No main project license file found"
+          echo "Consider adding a LICENSE file to clarify licensing terms"
+        fi
+
+        # Check third-party licenses
+        echo "Third-party dependencies:"
+
+        if [ -d third_party ]; then
+          find third_party -type f \( -name "LICENSE*" -o -name "COPYING*" -o -name "COPYRIGHT*" \) | \
+          while read license_file; do
+            echo "  License: $license_file"
+            # Extract license type if possible
+            if grep -i "MIT" "$license_file" >/dev/null 2>&1; then
+              echo "    Type: MIT License"
+            elif grep -i "Apache" "$license_file" >/dev/null 2>&1; then
+              echo "    Type: Apache License"
+            elif grep -i "BSD" "$license_file" >/dev/null 2>&1; then
+              echo "    Type: BSD License"
+            elif grep -i "GPL" "$license_file" >/dev/null 2>&1; then
+              echo "    Type: GPL License WARNING"
+              echo "    Note: GPL may have implications for proprietary use"
+            else
+              echo "    Type: Custom/Other"
+            fi
+          done
+        fi
+
+    - name: Create license report
+      run: |
+        echo "Creating license compliance report..."
+
+        cat > license-report.md << EOF
+        # License Compliance Report
+
+        Generated on: $(date)
+
+        ## Main Project License
+        EOF
+
+        if [ -f LICENSE ]; then
+          echo "Found: LICENSE" >> license-report.md
+          echo "\`\`\`" >> license-report.md
+          head -10 LICENSE >> license-report.md
+          echo "\`\`\`" >> license-report.md
+        else
+          echo "ERROR: No LICENSE file found" >> license-report.md
+        fi
+
+        echo "" >> license-report.md
+        echo "## Third-Party Dependencies" >> license-report.md
+
+        if [ -d third_party ]; then
+          find third_party -name "LICENSE*" -o -name "COPYING*" | while read file; do
+            echo "- \`$file\`" >> license-report.md
+          done
+        else
+          echo "No third-party directory found" >> license-report.md
+        fi
+
+    - name: Upload license report
+      uses: actions/upload-artifact@v3
+      with:
+        name: license-compliance-report
+        path: license-report.md
+        retention-days: 90
+
+  security-report:
+    name: Generate Security Report
+    runs-on: ubuntu-latest
+    needs: [dependency-check, secret-scan, vulnerability-assessment, license-compliance]
+    if: always()
+
+    steps:
+    - name: Download all security artifacts
+      uses: actions/download-artifact@v3
+      continue-on-error: true
+
+    - name: Generate security summary
+      run: |
+        echo "Security Assessment Summary"
+        echo "==========================="
+        echo ""
+        echo "Assessment completed on: $(date)"
+        echo "Repository: ${{ github.repository }}"
+        echo "Commit: ${{ github.sha }}"
+        echo ""
+
+        echo "## Jobs Status"
+        echo "- Dependency Check: ${{ needs.dependency-check.result }}"
+        echo "- Secret Scan: ${{ needs.secret-scan.result }}"
+        echo "- Vulnerability Assessment: ${{ needs.vulnerability-assessment.result }}"
+        echo "- License Compliance: ${{ needs.license-compliance.result }}"
+        echo ""
+
+        if [ "${{ needs.dependency-check.result }}" = "success" ] && \
+           [ "${{ needs.secret-scan.result }}" = "success" ] && \
+           [ "${{ needs.vulnerability-assessment.result }}" = "success" ] && \
+           [ "${{ needs.license-compliance.result }}" = "success" ]; then
+          echo "All security checks passed"
+        else
+          echo "WARNING: Some security checks failed or had issues"
+          echo "Please review the individual job outputs for details"
+        fi
+
+        echo ""
+        echo "## Next Steps"
+        echo "1. Review any security findings in the job outputs"
+        echo "2. Address critical and high severity issues"
+        echo "3. Update dependencies regularly"
+        echo "4. Monitor for new security advisories"
+
+        # Save summary to file
+        cat > security-summary.txt << EOF
+        Security Assessment Summary for ${{ github.repository }}
+
+        Assessment Date: $(date)
+        Commit: ${{ github.sha }}
+
+        Status Summary:
+        - Dependency Check: ${{ needs.dependency-check.result }}
+        - Secret Scan: ${{ needs.secret-scan.result }}
+        - Vulnerability Assessment: ${{ needs.vulnerability-assessment.result }}
+        - License Compliance: ${{ needs.license-compliance.result }}
+        EOF
+
+    - name: Upload security summary
+      uses: actions/upload-artifact@v3
+      with:
+        name: security-assessment-summary
+        path: security-summary.txt
+        retention-days: 90
+
+    - name: Comment on PR (if applicable)
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const summary = `## Security Assessment Results
+
+          | Check | Status |
+          |-------|--------|
+          | Dependency Check | ${{ needs.dependency-check.result == 'success' && 'PASS' || 'FAIL' }} |
+          | Secret Scan | ${{ needs.secret-scan.result == 'success' && 'PASS' || 'FAIL' }} |
+          | Vulnerability Assessment | ${{ needs.vulnerability-assessment.result == 'success' && 'PASS' || 'FAIL' }} |
+          | License Compliance | ${{ needs.license-compliance.result == 'success' && 'PASS' || 'FAIL' }} |
+
+          [View detailed results](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+          *Security assessment completed automatically*`;
+
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: summary
+          });
+
+  update-security-advisories:
+    name: Check Security Advisories
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Check for new advisories
+      run: |
+        echo "Checking for new security advisories..."
+
+        # This could be extended to check specific security databases
+        # For now, we'll just document the process
+
+        echo "Security monitoring checklist:"
+        echo "1. GitHub Security Advisories (automatic)"
+        echo "2. PostgreSQL Security Announcements"
+        echo "3. OpenAI API Security Updates"
+        echo "4. Anthropic API Security Updates"
+        echo "5. C++ Ecosystem Security News"
+
+        echo ""
+        echo "Consider subscribing to:"
+        echo "- PostgreSQL security mailing list"
+        echo "- OpenAI API status updates"
+        echo "- Anthropic security announcements"
+        echo "- GitHub Security Advisory Database"

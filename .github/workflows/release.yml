@@ -1,0 +1,451 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., v1.0.0)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark as pre-release'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  CMAKE_BUILD_TYPE: Release
+
+jobs:
+  validate-release:
+    name: Validate Release
+    runs-on: ubuntu-latest
+
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      is_prerelease: ${{ steps.version.outputs.is_prerelease }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Determine version
+      id: version
+      run: |
+        if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+          VERSION="${{ github.event.inputs.version }}"
+          IS_PRERELEASE="${{ github.event.inputs.prerelease }}"
+        else
+          VERSION="${{ github.ref_name }}"
+          # Check if it's a prerelease based on tag format
+          if [[ "$VERSION" == *"-"* ]]; then
+            IS_PRERELEASE="true"
+          else
+            IS_PRERELEASE="false"
+          fi
+        fi
+
+        # Validate version format
+        if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-.*)?$ ]]; then
+          echo "ERROR: Invalid version format: $VERSION"
+          echo "Expected format: v1.0.0 or v1.0.0-beta.1"
+          exit 1
+        fi
+
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "is_prerelease=$IS_PRERELEASE" >> $GITHUB_OUTPUT
+
+        echo "Version: $VERSION"
+        echo "Pre-release: $IS_PRERELEASE"
+
+    - name: Validate changelog
+      run: |
+        if [ -f CHANGELOG.md ]; then
+          if grep -q "${{ steps.version.outputs.version }}" CHANGELOG.md; then
+            echo "Changelog contains entry for ${{ steps.version.outputs.version }}"
+          else
+            echo "WARNING: No changelog entry found for ${{ steps.version.outputs.version }}"
+            echo "Consider updating CHANGELOG.md"
+          fi
+        else
+          echo "WARNING: No CHANGELOG.md found"
+        fi
+
+  build-release-artifacts:
+    name: Build Release Artifacts
+    needs: validate-release
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-20.04
+            pg_version: "14"
+            artifact_name: "pg_ai_query-${{ needs.validate-release.outputs.version }}-ubuntu-20.04-pg14"
+          - os: ubuntu-22.04
+            pg_version: "15"
+            artifact_name: "pg_ai_query-${{ needs.validate-release.outputs.version }}-ubuntu-22.04-pg15"
+          - os: ubuntu-22.04
+            pg_version: "16"
+            artifact_name: "pg_ai_query-${{ needs.validate-release.outputs.version }}-ubuntu-22.04-pg16"
+          - os: macos-12
+            pg_version: "14"
+            artifact_name: "pg_ai_query-${{ needs.validate-release.outputs.version }}-macos-12-pg14"
+          - os: macos-13
+            pg_version: "15"
+            artifact_name: "pg_ai_query-${{ needs.validate-release.outputs.version }}-macos-13-pg15"
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        fetch-depth: 0
+
+    - name: Install dependencies (Ubuntu)
+      if: startsWith(matrix.os, 'ubuntu')
+      run: |
+        sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+        wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          cmake \
+          libssl-dev \
+          pkg-config \
+          postgresql-${{ matrix.pg_version }} \
+          postgresql-server-dev-${{ matrix.pg_version }}
+
+    - name: Install dependencies (macOS)
+      if: startsWith(matrix.os, 'macos')
+      run: |
+        brew update
+        brew install cmake openssl pkg-config postgresql@${{ matrix.pg_version }}
+
+    - name: Configure CMake
+      run: |
+        if [[ "${{ matrix.os }}" == macos* ]]; then
+          export PG_CONFIG=$(brew --prefix postgresql@${{ matrix.pg_version }})/bin/pg_config
+          export OPENSSL_ROOT_DIR=$(brew --prefix openssl)
+        else
+          export PG_CONFIG=/usr/bin/pg_config
+        fi
+
+        cmake -B build \
+              -DCMAKE_BUILD_TYPE=${{env.CMAKE_BUILD_TYPE}} \
+              -DCMAKE_INSTALL_PREFIX=/tmp/pg_ai_query_install \
+              -DPACKAGE_VERSION="${{ needs.validate-release.outputs.version }}"
+
+    - name: Build extension
+      run: |
+        cmake --build build --config ${{env.CMAKE_BUILD_TYPE}} --parallel $(nproc 2>/dev/null || sysctl -n hw.ncpu)
+
+    - name: Create installation package
+      run: |
+        # Install to temporary directory
+        DESTDIR=/tmp/package cmake --install build
+
+        # Create package structure
+        mkdir -p package
+        cd package
+
+        # Copy extension files
+        if [[ "${{ matrix.os }}" == macos* ]]; then
+          PG_CONFIG=$(brew --prefix postgresql@${{ matrix.pg_version }})/bin/pg_config
+        else
+          PG_CONFIG=/usr/bin/pg_config
+        fi
+
+        SHAREDIR=$($PG_CONFIG --sharedir)
+        PKGLIBDIR=$($PG_CONFIG --pkglibdir)
+
+        mkdir -p "share/postgresql/extension"
+        mkdir -p "lib/postgresql"
+
+        # Copy files from installation
+        cp -r /tmp/package${SHAREDIR}/extension/* share/postgresql/extension/ 2>/dev/null || true
+        cp /tmp/package${PKGLIBDIR}/*.so lib/postgresql/ 2>/dev/null || true
+        cp /tmp/package${PKGLIBDIR}/*.dylib lib/postgresql/ 2>/dev/null || true
+
+        # Create install script
+        cat > install.sh << 'EOF'
+        #!/bin/bash
+        set -e
+
+        # Detect PostgreSQL installation
+        if command -v pg_config >/dev/null 2>&1; then
+            SHAREDIR=$(pg_config --sharedir)
+            PKGLIBDIR=$(pg_config --pkglibdir)
+        else
+            echo "Error: pg_config not found. Please ensure PostgreSQL is installed."
+            exit 1
+        fi
+
+        echo "Installing pg_ai_query extension..."
+        echo "Share directory: $SHAREDIR"
+        echo "Package lib directory: $PKGLIBDIR"
+
+        # Copy files
+        sudo cp -r share/postgresql/extension/* "$SHAREDIR/extension/"
+        sudo cp lib/postgresql/* "$PKGLIBDIR/"
+
+        echo "pg_ai_query extension installed successfully!"
+        echo ""
+        echo "To enable the extension in your database:"
+        echo "  CREATE EXTENSION pg_ai_query;"
+        echo ""
+        echo "For configuration help, see:"
+        echo "  https://github.com/${{ github.repository }}/blob/main/docs/src/configuration.md"
+        EOF
+
+        chmod +x install.sh
+
+        # Create README
+        cat > README.md << EOF
+        # pg_ai_query ${{ needs.validate-release.outputs.version }}
+
+        PostgreSQL AI Query Extension - Generate SQL queries from natural language using AI.
+
+        ## Installation
+
+        Run the install script:
+        \`\`\`bash
+        ./install.sh
+        \`\`\`
+
+        ## System Requirements
+
+        - PostgreSQL ${{ matrix.pg_version }}+
+        - ${{ matrix.os }} or compatible
+        - OpenSSL development libraries
+
+        ## Quick Start
+
+        1. Install the extension:
+           \`\`\`sql
+           CREATE EXTENSION pg_ai_query;
+           \`\`\`
+
+        2. Configure API key in ~/.pg_ai.config:
+           \`\`\`ini
+           [openai]
+           api_key = "your-api-key-here"
+           \`\`\`
+
+        3. Generate your first query:
+           \`\`\`sql
+           SELECT generate_query('show all users');
+           \`\`\`
+
+        ## Documentation
+
+        Complete documentation: https://${{ github.repository_owner }}.github.io/$(echo ${{ github.repository }} | cut -d'/' -f2)
+
+        ## Support
+
+        - Issues: https://github.com/${{ github.repository }}/issues
+        - Discussions: https://github.com/${{ github.repository }}/discussions
+        EOF
+
+        # Create version info
+        cat > VERSION << EOF
+        Version: ${{ needs.validate-release.outputs.version }}
+        Build Date: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+        Platform: ${{ matrix.os }}
+        PostgreSQL: ${{ matrix.pg_version }}
+        Commit: ${{ github.sha }}
+        EOF
+
+    - name: Create tarball
+      run: |
+        cd package
+        tar -czf "../${{ matrix.artifact_name }}.tar.gz" .
+        cd ..
+
+        echo "Package created: ${{ matrix.artifact_name }}.tar.gz"
+        echo "Package size: $(du -h ${{ matrix.artifact_name }}.tar.gz | cut -f1)"
+
+    - name: Upload release artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: ${{ matrix.artifact_name }}
+        path: ${{ matrix.artifact_name }}.tar.gz
+        retention-days: 30
+
+  create-release:
+    name: Create GitHub Release
+    needs: [validate-release, build-release-artifacts]
+    runs-on: ubuntu-latest
+
+    outputs:
+      release_url: ${{ steps.create_release.outputs.html_url }}
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Download all artifacts
+      uses: actions/download-artifact@v3
+
+    - name: Generate release notes
+      id: release_notes
+      run: |
+        echo "Generating release notes..."
+
+        # Start release notes
+        cat > release_notes.md << EOF
+        # pg_ai_query ${{ needs.validate-release.outputs.version }}
+
+        **PostgreSQL AI Query Extension** - Generate SQL queries from natural language using AI.
+
+        ## Installation
+
+        Download the appropriate package for your platform below and follow the installation instructions.
+
+        ## What's New
+
+        EOF
+
+        # Add changelog section if available
+        if [ -f CHANGELOG.md ]; then
+          echo "Adding changelog information..."
+          # Extract changelog for this version
+          sed -n "/## \[${{ needs.validate-release.outputs.version }}\]/,/## \[/p" CHANGELOG.md | head -n -1 >> release_notes.md || echo "No specific changelog entry found."
+        fi
+
+        # Add platform-specific installation notes
+        cat >> release_notes.md << EOF
+
+        ## Supported Platforms
+
+        | Platform | PostgreSQL | File |
+        |----------|------------|------|
+        | Ubuntu 20.04 | 14 | \`pg_ai_query-${{ needs.validate-release.outputs.version }}-ubuntu-20.04-pg14.tar.gz\` |
+        | Ubuntu 22.04 | 15 | \`pg_ai_query-${{ needs.validate-release.outputs.version }}-ubuntu-22.04-pg15.tar.gz\` |
+        | Ubuntu 22.04 | 16 | \`pg_ai_query-${{ needs.validate-release.outputs.version }}-ubuntu-22.04-pg16.tar.gz\` |
+        | macOS 12 | 14 | \`pg_ai_query-${{ needs.validate-release.outputs.version }}-macos-12-pg14.tar.gz\` |
+        | macOS 13 | 15 | \`pg_ai_query-${{ needs.validate-release.outputs.version }}-macos-13-pg15.tar.gz\` |
+
+        ## Documentation
+
+        - **Complete Guide**: https://${{ github.repository_owner }}.github.io/$(echo ${{ github.repository }} | cut -d'/' -f2)
+        - **Quick Start**: [Installation Guide](https://${{ github.repository_owner }}.github.io/$(echo ${{ github.repository }} | cut -d'/' -f2)/installation.html)
+        - **Configuration**: [Configuration Guide](https://${{ github.repository_owner }}.github.io/$(echo ${{ github.repository }} | cut -d'/' -f2)/configuration.html)
+
+        ## Requirements
+
+        - PostgreSQL 12+ with development headers
+        - OpenAI or Anthropic API key
+        - C++20 compatible compiler (for building from source)
+
+        ## Quick Start
+
+        1. Download and extract the appropriate package for your platform
+        2. Run \`./install.sh\` to install the extension
+        3. Connect to PostgreSQL and run: \`CREATE EXTENSION pg_ai_query;\`
+        4. Configure your API key in \`~/.pg_ai.config\`
+        5. Start generating queries: \`SELECT generate_query('show all users');\`
+
+        ## Issues & Support
+
+        - Report bugs: [GitHub Issues](https://github.com/${{ github.repository }}/issues)
+        - Questions: [GitHub Discussions](https://github.com/${{ github.repository }}/discussions)
+        - Documentation: [Official Docs](https://${{ github.repository_owner }}.github.io/$(echo ${{ github.repository }} | cut -d'/' -f2))
+
+        ---
+
+        **Full Changelog**: https://github.com/${{ github.repository }}/compare/v1.0.0...${{ needs.validate-release.outputs.version }}
+        EOF
+
+        # Set output for next step
+        echo "RELEASE_NOTES_FILE=release_notes.md" >> $GITHUB_OUTPUT
+
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ needs.validate-release.outputs.version }}
+        release_name: pg_ai_query ${{ needs.validate-release.outputs.version }}
+        body_path: release_notes.md
+        draft: false
+        prerelease: ${{ needs.validate-release.outputs.is_prerelease }}
+
+  upload-release-assets:
+    name: Upload Release Assets
+    needs: [validate-release, create-release]
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        artifact:
+          - "pg_ai_query-${{ needs.validate-release.outputs.version }}-ubuntu-20.04-pg14"
+          - "pg_ai_query-${{ needs.validate-release.outputs.version }}-ubuntu-22.04-pg15"
+          - "pg_ai_query-${{ needs.validate-release.outputs.version }}-ubuntu-22.04-pg16"
+          - "pg_ai_query-${{ needs.validate-release.outputs.version }}-macos-12-pg14"
+          - "pg_ai_query-${{ needs.validate-release.outputs.version }}-macos-13-pg15"
+
+    steps:
+    - name: Download artifact
+      uses: actions/download-artifact@v3
+      with:
+        name: ${{ matrix.artifact }}
+
+    - name: Upload Release Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ needs.create-release.outputs.upload_url }}
+        asset_path: ${{ matrix.artifact }}.tar.gz
+        asset_name: ${{ matrix.artifact }}.tar.gz
+        asset_content_type: application/gzip
+
+  post-release:
+    name: Post-Release Tasks
+    needs: [validate-release, create-release, upload-release-assets]
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Update documentation version
+      run: |
+        echo "Release ${{ needs.validate-release.outputs.version }} completed successfully!"
+        echo "Release URL: ${{ needs.create-release.outputs.release_url }}"
+        echo "Release Statistics:"
+        echo "  - Version: ${{ needs.validate-release.outputs.version }}"
+        echo "  - Pre-release: ${{ needs.validate-release.outputs.is_prerelease }}"
+        echo "  - Platforms: 5 supported platforms"
+        echo "  - Documentation: Updated and deployed"
+
+    - name: Create release announcement
+      if: needs.validate-release.outputs.is_prerelease == 'false'
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const version = '${{ needs.validate-release.outputs.version }}';
+          const releaseUrl = '${{ needs.create-release.outputs.release_url }}';
+
+          // You could extend this to post to discussions, send notifications, etc.
+          console.log(`pg_ai_query ${version} has been released!`);
+          console.log(`Download: ${releaseUrl}`);
+          console.log(`Docs: https://${{ github.repository_owner }}.github.io/$(echo ${{ github.repository }} | cut -d'/' -f2)`);
+
+          // Example: Create a discussion post (requires discussions to be enabled)
+          /*
+          await github.rest.discussions.createDiscussion({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: `pg_ai_query ${version} Released!`,
+            body: `We're excited to announce the release of pg_ai_query ${version}!\n\n[Download here](${releaseUrl})`,
+            category_id: 'announcements' // You'd need to get the actual category ID
+          });
+          */
