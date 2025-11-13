@@ -34,7 +34,7 @@ Configuration::Configuration() {
     ModelConfig gpt4o;
     gpt4o.name = "gpt-4o";
     gpt4o.description = "GPT-4 Omni - Latest model";
-    gpt4o.max_tokens = 128000;
+    gpt4o.max_tokens = 16384;
     gpt4o.temperature = 0.7;
 
     ModelConfig gpt4;

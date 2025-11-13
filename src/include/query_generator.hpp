@@ -10,6 +10,7 @@ struct QueryRequest {
     std::string table_name;
     std::string schema_context;
     std::string api_key;
+    std::string provider;
 };
 
 struct QueryResult {

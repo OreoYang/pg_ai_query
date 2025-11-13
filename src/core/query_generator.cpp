@@ -1,10 +1,12 @@
 #include "../include/query_generator.hpp"
 
 #include <ai/openai.h>
+#include <ai/anthropic.h>
 
 #include <algorithm>
 #include <fstream>
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <regex>
 #include <sstream>
 #include <vector>
@@ -24,52 +26,116 @@ QueryResult QueryGenerator::generateQuery(const QueryRequest& request) {
             return {.success = false, .error_message = "Natural language query cannot be empty"};
         }
 
-        // Load configuration
         const auto& cfg = config::ConfigManager::getConfig();
 
         std::string api_key = request.api_key;
-        if (api_key.empty()) {
-            // Try to get API key from config
-            const auto* provider_config =
-                config::ConfigManager::getProviderConfig(config::Provider::OPENAI);
-            if (provider_config && !provider_config->api_key.empty()) {
-                logger::Logger::info("Using API key from configuration");
+        std::string api_key_source = "parameter";
+        std::string provider_preference = request.provider;
+
+        config::Provider selected_provider;
+        const config::ProviderConfig* provider_config = nullptr;
+
+        if (provider_preference == "openai") {
+            selected_provider = config::Provider::OPENAI;
+            provider_config = config::ConfigManager::getProviderConfig(config::Provider::OPENAI);
+            logger::Logger::info("Explicit OpenAI provider selection from parameter");
+
+            if (api_key.empty() && provider_config && !provider_config->api_key.empty()) {
                 api_key = provider_config->api_key;
-            } else {
-                // Fallback to environment variable
-                const char* env_api_key = std::getenv("OPENAI_API_KEY");
-                if (env_api_key) {
-                    logger::Logger::info(std::string("Using environment API key: ") +
-                                         std::string(env_api_key).substr(0, 10) + "...");
-                    api_key = env_api_key;
-                } else {
-                    logger::Logger::warning(
-                        "No API key found in config or OPENAI_API_KEY environment variable");
-                    return {.success = false,
-                            .error_message =
-                                "OpenAI API key required. Pass as 4th parameter, set in "
-                                "~/.pg_ai.config, or set OPENAI_API_KEY "
-                                "environment variable."};
-                }
+                api_key_source = "openai_config";
+                logger::Logger::info("Using OpenAI API key from configuration");
             }
+        } else if (provider_preference == "anthropic") {
+            selected_provider = config::Provider::ANTHROPIC;
+            provider_config = config::ConfigManager::getProviderConfig(config::Provider::ANTHROPIC);
+            logger::Logger::info("Explicit Anthropic provider selection from parameter");
+
+            if (api_key.empty() && provider_config && !provider_config->api_key.empty()) {
+                api_key = provider_config->api_key;
+                api_key_source = "anthropic_config";
+                logger::Logger::info("Using Anthropic API key from configuration");
+            }
+        } else {
+            if (api_key.empty()) {
+                const auto* openai_config = config::ConfigManager::getProviderConfig(config::Provider::OPENAI);
+                if (openai_config && !openai_config->api_key.empty()) {
+                    logger::Logger::info("Auto-selecting OpenAI provider based on configuration");
+                    selected_provider = config::Provider::OPENAI;
+                    provider_config = openai_config;
+                    api_key = openai_config->api_key;
+                    api_key_source = "openai_config";
+                } else {
+                    const auto* anthropic_config = config::ConfigManager::getProviderConfig(config::Provider::ANTHROPIC);
+                    if (anthropic_config && !anthropic_config->api_key.empty()) {
+                        logger::Logger::info("Auto-selecting Anthropic provider based on configuration");
+                        selected_provider = config::Provider::ANTHROPIC;
+                        provider_config = anthropic_config;
+                        api_key = anthropic_config->api_key;
+                        api_key_source = "anthropic_config";
+                    } else {
+                        logger::Logger::warning("No API key found in config");
+                        return {.success = false,
+                                .error_message = "API key required. Pass as 4th parameter or set OpenAI or Anthropic API key in ~/.pg_ai.config."};
+                    }
+                }
+            } else {
+                selected_provider = config::Provider::OPENAI;
+                provider_config = config::ConfigManager::getProviderConfig(config::Provider::OPENAI);
+                logger::Logger::info("Auto-selecting OpenAI provider (API key provided, no provider specified)");
+            }
+        }
+
+        if (api_key.empty()) {
+            std::string provider_name = config::ConfigManager::providerToString(selected_provider);
+            return {.success = false,
+                    .error_message = "No API key available for " + provider_name + " provider. Please provide API key as parameter or configure it in ~/.pg_ai.config."};
         }
 
         std::string system_prompt = prompts::SYSTEM_PROMPT;
 
         std::string prompt = buildPrompt(request);
 
-        ai::Client client = [&]() {
-            try {
-                logger::Logger::info("Creating OpenAI client");
-                return ai::openai::create_client(api_key);
-            } catch (const std::exception& e) {
-                logger::Logger::error("Failed to create OpenAI client: " + std::string(e.what()));
-                throw std::runtime_error("Failed to create OpenAI client: " +
-                                         std::string(e.what()));
-            }
-        }();
+        config::Provider provider = selected_provider;
 
-        ai::GenerateOptions options(ai::openai::models::kGpt4o, system_prompt, prompt);
+        ai::Client client;
+        std::string model_name;
+
+        try {
+            if (provider == config::Provider::OPENAI) {
+                logger::Logger::info("Creating OpenAI client");
+                client = ai::openai::create_client(api_key);
+                model_name = (provider_config && !provider_config->default_model.name.empty()) ?
+                    provider_config->default_model.name : "gpt-4o";
+            } else if (provider == config::Provider::ANTHROPIC) {
+                logger::Logger::info("Creating Anthropic client");
+                client = ai::anthropic::create_client(api_key);
+                model_name = (provider_config && !provider_config->default_model.name.empty()) ?
+                    provider_config->default_model.name : "claude-3-5-sonnet-20241022";
+            } else {
+                logger::Logger::warning("Unknown provider, defaulting to OpenAI");
+                client = ai::openai::create_client(api_key);
+                model_name = "gpt-4o";
+            }
+
+            logger::Logger::info("Using " + config::ConfigManager::providerToString(provider) +
+                               " provider with model: " + model_name);
+        } catch (const std::exception& e) {
+            logger::Logger::error("Failed to create " + config::ConfigManager::providerToString(provider) +
+                                " client: " + std::string(e.what()));
+            throw std::runtime_error("Failed to create AI client: " + std::string(e.what()));
+        }
+
+        ai::GenerateOptions options(model_name, system_prompt, prompt);
+
+        const config::ModelConfig* model_config = config::ConfigManager::getModelConfig(model_name);
+        if (model_config) {
+            options.max_tokens = model_config->max_tokens;
+            options.temperature = model_config->temperature;
+            logger::Logger::info("Using model: " + model_name + " with max_tokens=" + std::to_string(model_config->max_tokens) +
+                               ", temperature=" + std::to_string(model_config->temperature));
+        } else {
+            logger::Logger::info("Using model: " + model_name + " with default settings");
+        }
 
         auto result = client.generate_text(options);
 
@@ -125,13 +191,6 @@ std::string QueryGenerator::buildPrompt(const QueryRequest& request) {
         prompt << "Schema info:\n" << request.schema_context << "\n";
     }
 
-    // prompt << "\nRequirements:\n";
-    // prompt << "- ONLY SELECT queries (no INSERT, UPDATE, DELETE, DROP, etc.)\n";
-    // prompt << "- Use proper PostgreSQL syntax\n";
-    // prompt << "- Include appropriate WHERE clauses for performance\n";
-    // prompt << "- Add LIMIT when appropriate\n";
-    // prompt << "- Return only the SQL query, no explanations\n";
-
     return prompt.str();
 }
 
@@ -154,31 +213,5 @@ nlohmann::json QueryGenerator::extractSQLFromResponse(const std::string& text) {
     // Fallback
     return {{"sql", text}, {"explanation", "Raw LLM output (no JSON detected)"}};
 }
-
-// bool QueryGenerator::isSafeQuery(const std::string& query) {
-//     if (query.empty()) return false;
-
-//     std::string lower_query = query;
-//     std::transform(lower_query.begin(), lower_query.end(), lower_query.begin(), ::tolower);
-
-//     // Must contain SELECT
-//     if (lower_query.find("select") == std::string::npos) {
-//         return false;
-//     }
-
-//     // Check for dangerous operations
-//     std::vector<std::string> forbidden = {
-//         "insert", "update", "delete", "drop", "create", "alter",
-//         "truncate", "grant", "revoke", "exec", "execute"
-//     };
-
-//     for (const auto& keyword : forbidden) {
-//         if (lower_query.find(keyword) != std::string::npos) {
-//             return false;
-//         }
-//     }
-
-//     return true;
-// }
 
 }  // namespace pg_ai
