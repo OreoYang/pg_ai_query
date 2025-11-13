@@ -9,6 +9,7 @@
 #include <sstream>
 #include <vector>
 
+#include "../include/config.hpp"
 #include "../include/logger.hpp"
 #include "../include/prompts.hpp"
 #include "../include/utils.hpp"
@@ -23,19 +24,33 @@ QueryResult QueryGenerator::generateQuery(const QueryRequest& request) {
             return {.success = false, .error_message = "Natural language query cannot be empty"};
         }
 
+        // Load configuration
+        const auto& cfg = config::ConfigManager::getConfig();
+
         std::string api_key = request.api_key;
         if (api_key.empty()) {
-            const char* env_api_key = std::getenv("OPENAI_API_KEY");
-            if (env_api_key) {
-                logger::Logger::info(std::string("Using environment API key: ") +
-                                     std::string(env_api_key).substr(0, 10) + "...");
-                api_key = env_api_key;
+            // Try to get API key from config
+            const auto* provider_config =
+                config::ConfigManager::getProviderConfig(config::Provider::OPENAI);
+            if (provider_config && !provider_config->api_key.empty()) {
+                logger::Logger::info("Using API key from configuration");
+                api_key = provider_config->api_key;
             } else {
-                logger::Logger::warning("No OPENAI_API_KEY environment variable found");
-                return {.success = false,
-                        .error_message =
-                            "OpenAI API key required. Pass as 4th parameter or set OPENAI_API_KEY "
-                            "environment variable."};
+                // Fallback to environment variable
+                const char* env_api_key = std::getenv("OPENAI_API_KEY");
+                if (env_api_key) {
+                    logger::Logger::info(std::string("Using environment API key: ") +
+                                         std::string(env_api_key).substr(0, 10) + "...");
+                    api_key = env_api_key;
+                } else {
+                    logger::Logger::warning(
+                        "No API key found in config or OPENAI_API_KEY environment variable");
+                    return {.success = false,
+                            .error_message =
+                                "OpenAI API key required. Pass as 4th parameter, set in "
+                                "~/.pg_ai.config, or set OPENAI_API_KEY "
+                                "environment variable."};
+                }
             }
         }
 

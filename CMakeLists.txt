@@ -34,6 +34,7 @@ set(SOURCES
     src/core/logger.cpp
     src/utils.cpp
     src/prompts.cpp
+    src/config.cpp
 )
 
 # Create module library for PostgreSQL extension

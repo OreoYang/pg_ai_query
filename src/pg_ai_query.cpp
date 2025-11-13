@@ -1,7 +1,7 @@
 extern "C" {
+#include <postgres.h>
 #include <fmgr.h>
 #include <funcapi.h>
-#include <postgres.h>
 #include <utils/builtins.h>
 #include <utils/elog.h>
 }
