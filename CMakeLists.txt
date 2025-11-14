@@ -84,10 +84,11 @@ target_link_libraries(pg_ai_query PRIVATE
     ai-sdk-cpp-core
     ai-sdk-cpp-openai
     ai-sdk-cpp-anthropic
-    ZLIB::ZLIB
     OpenSSL::SSL
     OpenSSL::Crypto
 )
+
+# Add system zlib separately (will be added by macOS section if needed)
 
 # Link Intl library if found
 if(Intl_FOUND)
@@ -115,6 +116,13 @@ if(APPLE)
     find_library(SYSTEM_Z z PATHS /usr/lib /System/Library/Frameworks REQUIRED)
     target_link_libraries(pg_ai_query PRIVATE ${SYSTEM_Z})
 
+    # Remove any references to ZLIB::ZLIB to avoid conflicts
+    get_target_property(CURRENT_LINK_LIBS pg_ai_query LINK_LIBRARIES)
+    if(CURRENT_LINK_LIBS)
+        list(REMOVE_ITEM CURRENT_LINK_LIBS "ZLIB::ZLIB")
+        set_target_properties(pg_ai_query PROPERTIES LINK_LIBRARIES "${CURRENT_LINK_LIBS}")
+    endif()
+
     message(STATUS "Found system zlib at: ${SYSTEM_Z}")
     message(STATUS "Found libz.1.dylib at: ${LIBZ_PATH}")
 endif()
@@ -135,7 +143,14 @@ install(TARGETS pg_ai_query
     LIBRARY DESTINATION ${PG_PKGLIB}
 )
 
+# Get PostgreSQL version to handle path differences
+execute_process(COMMAND ${PG_CONFIG} --version OUTPUT_VARIABLE PG_VERSION_STRING OUTPUT_STRIP_TRAILING_WHITESPACE)
+string(REGEX MATCH "PostgreSQL ([0-9]+)" PG_MAJOR_VERSION_MATCH ${PG_VERSION_STRING})
+set(PG_MAJOR_VERSION ${CMAKE_MATCH_1})
+
 # Debug: Print installation paths
+message(STATUS "PostgreSQL version: ${PG_VERSION_STRING}")
+message(STATUS "PostgreSQL major version: ${PG_MAJOR_VERSION}")
 message(STATUS "PostgreSQL pkglibdir: ${PG_PKGLIB}")
 message(STATUS "PostgreSQL sharedir: ${PG_SHAREDIR}")
 message(STATUS "Extension will be installed to: ${PG_PKGLIB}")

@@ -150,6 +150,28 @@ jobs:
         echo "Checking linked libraries:"
         otool -L "$PG_PKGLIB/pg_ai_query.so" || echo "Could not check linked libraries"
 
+        # Debug: Check what $libdir resolves to in PostgreSQL
+        echo "Testing \$libdir resolution:"
+        psql -d testdb -c "SHOW dynamic_library_path;" || echo "Could not check dynamic_library_path"
+
+        # Test if we can load the extension with full path
+        echo "Testing extension loading with full path:"
+        psql -d testdb -c "LOAD '$PG_PKGLIB/pg_ai_query.so';" || echo "Could not load with full path"
+
+        # Try alternative installation for PostgreSQL 16
+        if [[ "${{ matrix.pg_version }}" == "16" ]]; then
+          echo "PostgreSQL 16 detected, trying alternative installation..."
+          # Check if there's a lib/ subdirectory expected
+          mkdir -p "$PG_PKGLIB/../lib/" 2>/dev/null || true
+          cp "$PG_PKGLIB/pg_ai_query.so" "$PG_PKGLIB/../lib/" 2>/dev/null || true
+
+          # Also try the standard PostgreSQL lib directory
+          PG_LIB_ALT="$(brew --prefix postgresql@${{ matrix.pg_version }})/lib"
+          echo "Trying alternative lib directory: $PG_LIB_ALT"
+          mkdir -p "$PG_LIB_ALT" 2>/dev/null || true
+          cp "$PG_PKGLIB/pg_ai_query.so" "$PG_LIB_ALT/" 2>/dev/null || true
+        fi
+
         # Basic functionality test
         psql -d testdb -c "CREATE EXTENSION IF NOT EXISTS pg_ai_query;"
 
