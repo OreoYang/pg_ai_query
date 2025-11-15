@@ -70,6 +70,97 @@ SELECT generate_query('show top 10 customers by total order value with their con
 
 ---
 
+### explain_query()
+
+Analyzes query performance using EXPLAIN ANALYZE and provides AI-powered optimization insights.
+
+#### Signature
+```sql
+explain_query(
+    query_text text,
+    api_key text DEFAULT NULL,
+    provider text DEFAULT 'auto'
+) RETURNS text
+```
+
+#### Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `query_text` | text | ✓ | - | The SQL query to analyze |
+| `api_key` | text | ✗ | NULL | API key for AI provider (uses config if NULL) |
+| `provider` | text | ✗ | 'auto' | AI provider to use: 'openai', 'anthropic', or 'auto' |
+
+#### Returns
+- **Type**: `text`
+- **Content**: Detailed performance analysis and optimization recommendations
+
+#### Examples
+
+```sql
+-- Basic usage
+SELECT explain_query('SELECT * FROM users WHERE active = true');
+
+-- Complex query analysis
+SELECT explain_query('
+    SELECT u.username, COUNT(o.id) as order_count
+    FROM users u
+    LEFT JOIN orders o ON u.id = o.user_id
+    GROUP BY u.username
+    ORDER BY order_count DESC
+    LIMIT 100
+');
+
+-- With specific provider
+SELECT explain_query(
+    'SELECT * FROM products WHERE price > 100',
+    'your-api-key',
+    'anthropic'
+);
+
+-- Integration with generate_query
+WITH generated AS (
+    SELECT generate_query('find recent high-value orders') as query
+)
+SELECT explain_query((SELECT query FROM generated));
+```
+
+#### Output Structure
+
+The function returns structured text analysis containing:
+
+- **Query Overview**: Brief description of query purpose
+- **Performance Summary**: Execution time, cost estimates, rows processed
+- **Execution Plan Analysis**: Breakdown of PostgreSQL's execution strategy
+- **Performance Issues**: Identified bottlenecks and inefficiencies
+- **Optimization Suggestions**: Specific recommendations for improvement
+- **Index Recommendations**: Suggested indexes with CREATE statements
+
+#### Supported Query Types
+
+| Type | Description | Notes |
+|------|-------------|-------|
+| SELECT | Data retrieval queries | Fully supported |
+| WITH | Common Table Expressions | Fully supported |
+| VALUES | Value lists | Fully supported |
+
+#### Behavior
+
+- **Actual Execution**: Uses EXPLAIN ANALYZE which executes the query
+- **Performance Metrics**: Provides real execution times and row counts
+- **AI Analysis**: Processes execution plan through AI for insights
+- **Security**: Only allows read-only query types
+- **Error Handling**: Graceful handling of invalid queries
+
+#### Performance Considerations
+
+- **Query Execution**: The function actually runs your query
+- **Analysis Time**: AI processing adds 1-3 seconds
+- **Resource Usage**: Same as running the query manually
+- **Best for**: Development, testing, and performance optimization
+
+---
+
 ### get_database_tables()
 
 Returns metadata about all user tables in the database.

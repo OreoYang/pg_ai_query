@@ -9,9 +9,11 @@ The **PostgreSQL AI Query Extension** (`pg_ai_query`) is a powerful PostgreSQL e
 ## Key Features
 
 - **Natural Language to SQL**: Convert plain English descriptions into valid PostgreSQL queries
+- **AI-Powered Query Analysis**: Analyze query performance with EXPLAIN ANALYZE and get optimization insights
 - **Automatic Schema Discovery**: The extension automatically analyzes your database schema to understand table structures, relationships, and constraints
 - **Multiple AI Providers**: Support for both OpenAI (GPT-4, GPT-3.5) and Anthropic (Claude) models
 - **Intelligent Query Generation**: Generates optimized queries with appropriate JOINs, WHERE clauses, and LIMIT constraints
+- **Performance Optimization**: Get AI-powered recommendations for query improvements and index suggestions
 - **Safety First**: Built-in protections against dangerous operations and unauthorized access to system tables
 - **Configurable**: Flexible configuration system with support for API keys, model selection, and logging
 - **PostgreSQL Native**: Runs directly within PostgreSQL as a native extension
@@ -26,6 +28,7 @@ The **PostgreSQL AI Query Extension** (`pg_ai_query`) is a powerful PostgreSQL e
 
 ## Example Usage
 
+### Query Generation
 ```sql
 -- Simple query
 SELECT generate_query('show me all users created in the last 7 days');
@@ -35,6 +38,27 @@ SELECT generate_query('count orders by status', 'your-api-key-here');
 
 -- With specific provider
 SELECT generate_query('find top 10 customers by revenue', 'your-api-key', 'openai');
+```
+
+### Query Performance Analysis
+```sql
+-- Analyze query performance
+SELECT explain_query('SELECT * FROM users WHERE active = true');
+
+-- Get optimization suggestions for complex queries
+SELECT explain_query('
+    SELECT u.username, COUNT(o.id) as orders
+    FROM users u
+    LEFT JOIN orders o ON u.id = o.user_id
+    GROUP BY u.username
+    ORDER BY orders DESC
+');
+
+-- Combine generation and analysis
+WITH generated AS (
+    SELECT generate_query('find high-value recent orders') as query
+)
+SELECT explain_query((SELECT query FROM generated));
 ```
 
 ## Supported AI Models
@@ -50,8 +74,11 @@ SELECT generate_query('find top 10 customers by revenue', 'your-api-key', 'opena
 ## Use Cases
 
 - **Data Exploration**: Quickly explore your data without writing complex SQL
+- **Query Optimization**: Analyze and optimize slow-performing queries with AI insights
+- **Performance Monitoring**: Regular analysis of critical queries for performance regression
 - **Business Intelligence**: Generate reports and analytics queries from natural descriptions
-- **Learning SQL**: Understand how natural language translates to SQL syntax
+- **Learning SQL**: Understand how natural language translates to SQL syntax and learn optimization techniques
+- **Index Planning**: Get AI-powered recommendations for database index strategies
 - **Rapid Prototyping**: Quickly generate queries for testing and development
 - **Documentation**: Generate example queries for database documentation
 
@@ -60,6 +87,7 @@ SELECT generate_query('find top 10 customers by revenue', 'your-api-key', 'opena
 The extension consists of several key components:
 
 - **Query Generator**: Core engine that processes natural language and generates SQL
+- **Query Analyzer**: Performance analysis engine using EXPLAIN ANALYZE and AI insights
 - **Schema Discovery**: Automatically analyzes database structure and relationships
 - **AI Provider Integration**: Handles communication with OpenAI and Anthropic APIs
 - **Configuration Manager**: Manages settings, API keys, and model configurations
