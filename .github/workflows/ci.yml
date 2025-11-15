@@ -1,302 +1,243 @@
 name: CI/CD Pipeline
-
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
-
+    branches: [main]
 # Required permissions for CodeQL action
 permissions:
   contents: read
   security-events: write
   actions: read
-
 env:
   CMAKE_BUILD_TYPE: Release
-
 jobs:
   build-and-test:
     name: Build and Test
     runs-on: ${{ matrix.os }}
-
     strategy:
       fail-fast: false
       matrix:
-        # os: [ubuntu-latest, macos-latest]  # Temporarily comment out Ubuntu
+        # os: [ubuntu-latest, macos-latest] # Temporarily comment out Ubuntu
         os: [macos-latest]
         pg_version: ["14", "15", "16"]
-
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        submodules: recursive
-        fetch-depth: 0
-
-    - name: Verify submodules
-      run: |
-        echo "Verifying submodule initialization..."
-        git submodule status
-        ls -la third_party/ai-sdk-cpp/CMakeLists.txt
-
-    - name: Cache dependencies
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cache/vcpkg
-          build/_deps
-        key: ${{ runner.os }}-pg${{ matrix.pg_version }}-${{ hashFiles('**/CMakeLists.txt') }}
-        restore-keys: |
-          ${{ runner.os }}-pg${{ matrix.pg_version }}-
-
-    - name: Install dependencies (Ubuntu)
-      if: matrix.os == 'ubuntu-latest'
-      run: |
-        # Install PostgreSQL from official APT repository
-        wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
-        sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
-        sudo apt-get update
-        sudo apt-get install -y \
-          build-essential \
-          cmake \
-          libssl-dev \
-          pkg-config \
-          gettext \
-          libz-dev \
-          postgresql-${{ matrix.pg_version }} \
-          postgresql-server-dev-${{ matrix.pg_version }}
-
-    - name: Install dependencies (macOS)
-      if: matrix.os == 'macos-latest'
-      run: |
-        brew update
-        brew install cmake openssl pkg-config gettext postgresql@${{ matrix.pg_version }}
-        # Link gettext for macOS
-        brew link --force gettext
-
-    - name: Setup PostgreSQL (Ubuntu)
-      if: matrix.os == 'ubuntu-latest'
-      run: |
-        sudo systemctl start postgresql
-        sudo -u postgres createuser -s $USER
-        sudo -u postgres createdb testdb
-
-    - name: Setup PostgreSQL (macOS)
-      if: matrix.os == 'macos-latest'
-      run: |
-        # Add PostgreSQL to PATH
-        echo "$(brew --prefix postgresql@${{ matrix.pg_version }})/bin" >> $GITHUB_PATH
-        export PATH="$(brew --prefix postgresql@${{ matrix.pg_version }})/bin:$PATH"
-
-        brew services start postgresql@${{ matrix.pg_version }}
-        sleep 5
-
-        # Verify tools are available
-        which psql || echo "psql not found"
-        which createdb || echo "createdb not found"
-
-        createdb testdb || true
-
-    - name: Configure CMake
-      run: |
-        if [[ "${{ matrix.os }}" == "macos-latest" ]]; then
-          PG_CONFIG=$(brew --prefix postgresql@${{ matrix.pg_version }})/bin/pg_config
-          OPENSSL_ROOT_DIR=$(brew --prefix openssl)
-          cmake -B build -DCMAKE_BUILD_TYPE=${{env.CMAKE_BUILD_TYPE}} \
-                -DCMAKE_INSTALL_PREFIX=/tmp/pg_ai_query_install \
-                -DPG_CONFIG="$PG_CONFIG" \
-                -DOPENSSL_ROOT_DIR="$OPENSSL_ROOT_DIR"
-        else
-          cmake -B build -DCMAKE_BUILD_TYPE=${{env.CMAKE_BUILD_TYPE}} \
-                -DCMAKE_INSTALL_PREFIX=/tmp/pg_ai_query_install \
-                -DPG_CONFIG=/usr/bin/pg_config
-        fi
-
-    - name: Build extension
-      run: |
-        cmake --build build --config ${{env.CMAKE_BUILD_TYPE}} --parallel $(nproc 2>/dev/null || sysctl -n hw.ncpu)
-
-    - name: Run tests
-      run: |
-        # Install extension for testing
-        if [[ "${{ matrix.os }}" == "macos-latest" ]]; then
-          export PG_CONFIG=$(brew --prefix postgresql@${{ matrix.pg_version }})/bin/pg_config
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+      - name: Verify submodules
+        run: |
+          echo "Verifying submodule initialization..."
+          git submodule status
+          ls -la third_party/ai-sdk-cpp/CMakeLists.txt
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/vcpkg
+            build/_deps
+          key: ${{ runner.os }}-pg${{ matrix.pg_version }}-${{ hashFiles('**/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pg${{ matrix.pg_version }}-
+      - name: Install dependencies (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          # Install PostgreSQL from official APT repository
+          wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
+          sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            libssl-dev \
+            pkg-config \
+            gettext \
+            libz-dev \
+            postgresql-${{ matrix.pg_version }} \
+            postgresql-server-dev-${{ matrix.pg_version }}
+      - name: Install dependencies (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          brew update
+          brew install cmake openssl pkg-config gettext postgresql@${{ matrix.pg_version }}
+          # Link gettext for macOS
+          brew link --force gettext
+      - name: Setup PostgreSQL (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo systemctl start postgresql
+          sudo -u postgres createuser -s $USER
+          sudo -u postgres createdb testdb
+      - name: Setup PostgreSQL (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          # Add PostgreSQL to PATH
+          echo "$(brew --prefix postgresql@${{ matrix.pg_version }})/bin" >> $GITHUB_PATH
           export PATH="$(brew --prefix postgresql@${{ matrix.pg_version }})/bin:$PATH"
-          export PGDATA="/opt/homebrew/var/postgresql@${{ matrix.pg_version }}"
-        fi
-        sudo cmake --install build
-
-        # Verify psql is available
-        which psql || echo "psql not found in PATH"
-        psql --version || echo "psql version check failed"
-
-        # Verify extension files were installed
-        PG_PKGLIB=$($(brew --prefix postgresql@${{ matrix.pg_version }})/bin/pg_config --pkglibdir)
-        PG_SHAREDIR=$($(brew --prefix postgresql@${{ matrix.pg_version }})/bin/pg_config --sharedir)
-        echo "PostgreSQL pkglibdir: $PG_PKGLIB"
-        echo "PostgreSQL sharedir: $PG_SHAREDIR"
-
-        # Check both possible installation locations
-        echo "Checking for extension binary in pkglibdir:"
-        ls -la "$PG_PKGLIB/pg_ai_query.so" || echo "Extension binary not found in pkglibdir"
-
-        # For PostgreSQL 16, also check the lib directory
-        if [[ "${{ matrix.pg_version }}" == "16" ]]; then
-          PG_BASE_DIR=$(dirname "$PG_PKGLIB")
-          PG_LIB_DIR="$PG_BASE_DIR/lib"
-          echo "Checking for extension binary in lib directory: $PG_LIB_DIR"
-          ls -la "$PG_LIB_DIR/pg_ai_query.so" || echo "Extension binary not found in lib directory"
-
-          # Test if PostgreSQL can resolve $libdir correctly
-          echo "Testing \$libdir resolution for PostgreSQL 16:"
-          psql -d testdb -c "SHOW dynamic_library_path;" || echo "Could not check dynamic_library_path"
-
-          # Try loading from both locations
-          if [ -f "$PG_LIB_DIR/pg_ai_query.so" ]; then
-            echo "Testing extension loading from lib directory:"
-            psql -d testdb -c "LOAD '$PG_LIB_DIR/pg_ai_query';" || echo "Could not load from lib directory"
+          brew services start postgresql@${{ matrix.pg_version }}
+          sleep 5
+          # Verify tools are available
+          which psql || echo "psql not found"
+          which createdb || echo "createdb not found"
+          createdb testdb || true
+      - name: Configure CMake
+        run: |
+          if [[ "${{ matrix.os }}" == "macos-latest" ]]; then
+            PG_CONFIG=$(brew --prefix postgresql@${{ matrix.pg_version }})/bin/pg_config
+            OPENSSL_ROOT_DIR=$(brew --prefix openssl)
+            cmake -B build -DCMAKE_BUILD_TYPE=${{env.CMAKE_BUILD_TYPE}} \
+                  -DPG_CONFIG="$PG_CONFIG" \
+                  -DOPENSSL_ROOT_DIR="$OPENSSL_ROOT_DIR"
+          else
+            cmake -B build -DCMAKE_BUILD_TYPE=${{env.CMAKE_BUILD_TYPE}} \
+                  -DPG_CONFIG=/usr/bin/pg_config
           fi
-        fi
-
-        echo "Checking for control file:"
-        ls -la "$PG_SHAREDIR/extension/pg_ai_query.control" || echo "Control file not found"
-
-        echo "Checking for SQL file:"
-        ls -la "$PG_SHAREDIR/extension/pg_ai_query--1.0.sql" || echo "SQL file not found"
-
-        # Check linked libraries
-        EXTENSION_PATH=""
-        if [[ "${{ matrix.pg_version }}" == "16" ]]; then
-          PG_BASE_DIR=$(dirname "$PG_PKGLIB")
-          EXTENSION_PATH="$PG_BASE_DIR/lib/pg_ai_query.so"
-        else
-          EXTENSION_PATH="$PG_PKGLIB/pg_ai_query.so"
-        fi
-
-        if [ -f "$EXTENSION_PATH" ]; then
-          echo "Checking linked libraries for: $EXTENSION_PATH"
-          otool -L "$EXTENSION_PATH" || echo "Could not check linked libraries"
-
+      - name: Build extension
+        run: |
+          cmake --build build --config ${{env.CMAKE_BUILD_TYPE}} --parallel $(nproc 2>/dev/null || sysctl -n hw.ncpu)
+      - name: Run tests
+        run: |
+          set -e  # Fail on any error
+          # Install extension for testing
+          if [[ "${{ matrix.os }}" == "macos-latest" ]]; then
+            export PG_CONFIG=$(brew --prefix postgresql@${{ matrix.pg_version }})/bin/pg_config
+            export PATH="$(brew --prefix postgresql@${{ matrix.pg_version }})/bin:$PATH"
+            export PGDATA="/opt/homebrew/var/postgresql@${{ matrix.pg_version }}"
+          fi
+          # Install into the correct Homebrew prefix (overrides CMAKE_INSTALL_PREFIX)
+          BREW_PREFIX=$(brew --prefix postgresql@${{ matrix.pg_version }})
+          sudo cmake --install build --prefix "$BREW_PREFIX"
+          # Verify psql is available
+          which psql || echo "psql not found in PATH"
+          psql --version || echo "psql version check failed"
+          # Get paths from pg_config
+          PG_CONFIG=${PG_CONFIG:-/usr/bin/pg_config}
+          PG_PKGLIB=$($PG_CONFIG --pkglibdir)
+          PG_LIBDIR=$($PG_CONFIG --libdir)
+          PG_SHAREDIR=$($PG_CONFIG --sharedir)
+          echo "PostgreSQL pkglibdir: $PG_PKGLIB"
+          echo "PostgreSQL libdir: $PG_LIBDIR"
+          echo "PostgreSQL sharedir: $PG_SHAREDIR"
+            EXTENSION_PATH="$PG_PKGLIB/pg_ai_query.so"
+            echo "Checking for extension binary in pkglibdir:"
+            ls -la "$EXTENSION_PATH" || { echo "Extension binary not found in pkglibdir"; exit 1; }
+          # Test $libdir resolution
+          echo "Testing \$libdir resolution:"
+          psql -d testdb -c "SHOW dynamic_library_path;" || echo "Could not check dynamic_library_path"
+          # Load with full path
           echo "Testing extension loading with full path:"
-          psql -d testdb -c "LOAD '$EXTENSION_PATH';" || echo "Could not load with full path"
-        fi
-
-        # Basic functionality test
-        psql -d testdb -c "CREATE EXTENSION IF NOT EXISTS pg_ai_query;"
-
-        # Test basic functions exist
-        psql -d testdb -c "\\df generate_query"
-        psql -d testdb -c "\\df get_database_tables"
-        psql -d testdb -c "\\df get_table_details"
-
-        # Test with sample data
-        psql -d testdb -c "CREATE TABLE test_users (id SERIAL PRIMARY KEY, name VARCHAR(100));"
-        psql -d testdb -c "INSERT INTO test_users (name) VALUES ('Test User');"
-
-        # Test schema discovery
-        psql -d testdb -c "SELECT get_database_tables();"
-        psql -d testdb -c "SELECT get_table_details('test_users');"
-
-    - name: Upload build artifacts
-      uses: actions/upload-artifact@v4
-      if: always()
-      with:
-        name: build-artifacts-${{ matrix.os }}-pg${{ matrix.pg_version }}
-        path: |
-          build/*.so
-          build/*.dylib
-          build/CMakeCache.txt
-          build/CMakeFiles/CMakeError.log
-        retention-days: 7
-
+          psql -d testdb -c "LOAD '$EXTENSION_PATH';" || { echo "Could not load with full path"; exit 1; }
+          # Check control and SQL files
+          echo "Checking for control file:"
+          ls -la "$PG_SHAREDIR/extension/pg_ai_query.control" || echo "Control file not found"
+          echo "Checking for SQL file:"
+          ls -la "$PG_SHAREDIR/extension/pg_ai_query--1.0.sql" || echo "SQL file not found"
+          # Check linked libraries (macOS only)
+          if [[ "${{ matrix.os }}" == "macos-latest" ]]; then
+            echo "Checking linked libraries for: $EXTENSION_PATH"
+            otool -L "$EXTENSION_PATH" || echo "Could not check linked libraries"
+          fi
+          # Basic functionality test
+          psql -d testdb -c "CREATE EXTENSION IF NOT EXISTS pg_ai_query;" || { echo "CREATE EXTENSION failed"; exit 1; }
+          # Test basic functions exist
+          psql -d testdb -c "\\df generate_query"
+          psql -d testdb -c "\\df get_database_tables"
+          psql -d testdb -c "\\df get_table_details"
+          # Test with sample data
+          psql -d testdb -c "CREATE TABLE test_users (id SERIAL PRIMARY KEY, name VARCHAR(100));"
+          psql -d testdb -c "INSERT INTO test_users (name) VALUES ('Test User');"
+          # Test schema discovery
+          psql -d testdb -c "SELECT get_database_tables();"
+          psql -d testdb -c "SELECT get_table_details('test_users');"
+          echo "All tests passed!"
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: build-artifacts-${{ matrix.os }}-pg${{ matrix.pg_version }}
+          path: |
+            build/*.so
+            build/*.dylib
+            build/CMakeCache.txt
+            build/CMakeFiles/CMakeError.log
+          retention-days: 7
   static-analysis:
     name: Static Analysis
     runs-on: ubuntu-latest
-
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        submodules: recursive
-
-    - name: Install dependencies
-      run: |
-        # Install PostgreSQL from official APT repository
-        wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
-        sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
-        sudo apt-get update
-        sudo apt-get install -y \
-          build-essential \
-          cmake \
-          libssl-dev \
-          gettext \
-          libz-dev \
-          postgresql-14 \
-          postgresql-server-dev-14 \
-          cppcheck \
-          clang-tidy
-
-    - name: Configure CMake with static analysis
-      run: |
-        cmake -B build -DCMAKE_BUILD_TYPE=Debug \
-              -DPG_CONFIG=/usr/bin/pg_config \
-              -DCMAKE_CXX_CPPCHECK="cppcheck;--enable=all;--suppress=missingIncludeSystem" \
-              -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-
-    - name: Run static analysis
-      run: |
-        cmake --build build --target all 2>&1 | tee static-analysis.log
-
-    - name: Run clang-tidy
-      run: |
-        find src -name "*.cpp" -o -name "*.hpp" | head -10 | \
-        xargs clang-tidy -p build --checks='-*,readability-*,performance-*,bugprone-*,modernize-*' \
-        2>&1 | tee clang-tidy.log || true
-
-    - name: Upload analysis results
-      uses: actions/upload-artifact@v4
-      with:
-        name: static-analysis-results
-        path: |
-          static-analysis.log
-          clang-tidy.log
-        retention-days: 30
-
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install dependencies
+        run: |
+          # Install PostgreSQL from official APT repository
+          wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
+          sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            libssl-dev \
+            gettext \
+            libz-dev \
+            postgresql-14 \
+            postgresql-server-dev-14 \
+            cppcheck \
+            clang-tidy
+      - name: Configure CMake with static analysis
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Debug \
+                -DPG_CONFIG=/usr/bin/pg_config \
+                -DCMAKE_CXX_CPPCHECK="cppcheck;--enable=all;--suppress=missingIncludeSystem" \
+                -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+      - name: Run static analysis
+        run: |
+          cmake --build build --target all 2>&1 | tee static-analysis.log
+      - name: Run clang-tidy
+        run: |
+          find src -name "*.cpp" -o -name "*.hpp" | head -10 | \
+          xargs clang-tidy -p build --checks='-*,readability-*,performance-*,bugprone-*,modernize-*' \
+          2>&1 | tee clang-tidy.log || true
+      - name: Upload analysis results
+        uses: actions/upload-artifact@v4
+        with:
+          name: static-analysis-results
+          path: |
+            static-analysis.log
+            clang-tidy.log
+          retention-days: 30
   security-scan:
     name: Security Scan
     runs-on: ubuntu-latest
-
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        submodules: recursive
-
-    - name: Run Trivy vulnerability scanner
-      uses: aquasecurity/trivy-action@master
-      with:
-        scan-type: 'fs'
-        format: 'sarif'
-        output: 'trivy-results.sarif'
-
-    - name: Upload Trivy scan results to GitHub Security tab
-      uses: github/codeql-action/upload-sarif@v4
-      if: always() && github.event_name != 'pull_request'
-      continue-on-error: true
-      with:
-        sarif_file: 'trivy-results.sarif'
-
-    - name: Upload Trivy results as artifact (for PRs)
-      if: github.event_name == 'pull_request'
-      uses: actions/upload-artifact@v4
-      with:
-        name: trivy-security-scan-results
-        path: 'trivy-results.sarif'
-        retention-days: 7
-
-    - name: Check for secrets
-      uses: trufflesecurity/trufflehog@main
-      with:
-        path: ./
-        extra_args: --debug --only-verified
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: "fs"
+          format: "sarif"
+          output: "trivy-results.sarif"
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v4
+        if: always() && github.event_name != 'pull_request'
+        continue-on-error: true
+        with:
+          sarif_file: "trivy-results.sarif"
+      - name: Upload Trivy results as artifact (for PRs)
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-security-scan-results
+          path: "trivy-results.sarif"
+          retention-days: 7
+      - name: Check for secrets
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          extra_args: --debug --only-verified

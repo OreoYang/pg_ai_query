@@ -140,25 +140,9 @@ target_compile_definitions(pg_ai_query PRIVATE
 
 # Get PostgreSQL version to handle path differences
 execute_process(COMMAND ${PG_CONFIG} --version OUTPUT_VARIABLE PG_VERSION_STRING OUTPUT_STRIP_TRAILING_WHITESPACE)
-string(REGEX MATCH "PostgreSQL ([0-9]+)" PG_MAJOR_VERSION_MATCH ${PG_VERSION_STRING})
 set(PG_MAJOR_VERSION ${CMAKE_MATCH_1})
 
-# Install target to correct PostgreSQL lib directory
-# Handle PostgreSQL 16+ path differences
-if(PG_MAJOR_VERSION GREATER_EQUAL 16)
-    # PostgreSQL 16+ expects extensions in the standard lib directory
-    execute_process(COMMAND ${PG_CONFIG} --libdir
-        OUTPUT_VARIABLE PG_LIBDIR OUTPUT_STRIP_TRAILING_WHITESPACE)
-    install(TARGETS pg_ai_query
-        LIBRARY DESTINATION ${PG_LIBDIR}
-    )
-    message(STATUS "PostgreSQL 16+ detected, installing to: ${PG_LIB_DIR}")
-else()
-    install(TARGETS pg_ai_query
-        LIBRARY DESTINATION ${PG_PKGLIB}
-    )
-    message(STATUS "PostgreSQL <16 detected, installing to: ${PG_PKGLIB}")
-endif()
+install(TARGETS pg_ai_query LIBRARY DESTINATION ${PG_PKGLIB})
 
 # Debug: Print installation paths
 message(STATUS "PostgreSQL version: ${PG_VERSION_STRING}")
