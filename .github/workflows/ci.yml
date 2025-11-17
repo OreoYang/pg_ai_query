@@ -120,9 +120,14 @@ jobs:
           echo "PostgreSQL pkglibdir: $PG_PKGLIB"
           echo "PostgreSQL libdir: $PG_LIBDIR"
           echo "PostgreSQL sharedir: $PG_SHAREDIR"
+          # Use correct extension based on OS
+          if [[ "${{ matrix.os }}" == "macos-latest" ]]; then
+            EXTENSION_PATH="$PG_PKGLIB/pg_ai_query.dylib"
+          else
             EXTENSION_PATH="$PG_PKGLIB/pg_ai_query.so"
-            echo "Checking for extension binary in pkglibdir:"
-            ls -la "$EXTENSION_PATH" || { echo "Extension binary not found in pkglibdir"; exit 1; }
+          fi
+          echo "Checking for extension binary in pkglibdir:"
+          ls -la "$EXTENSION_PATH" || { echo "Extension binary not found in pkglibdir"; exit 1; }
           # Test $libdir resolution
           echo "Testing \$libdir resolution:"
           psql -d testdb -c "SHOW dynamic_library_path;" || echo "Could not check dynamic_library_path"
@@ -135,6 +140,9 @@ jobs:
           if [[ "${{ matrix.os }}" == "macos-latest" ]]; then
             echo "Checking linked libraries for: $EXTENSION_PATH"
             otool -L "$EXTENSION_PATH" || echo "Could not check linked libraries"
+          else
+            echo "Checking linked libraries for: $EXTENSION_PATH"
+            ldd "$EXTENSION_PATH" || echo "Could not check linked libraries"
           fi
           # Basic functionality test
           psql -d testdb -c "CREATE EXTENSION IF NOT EXISTS pg_ai_query;" || { echo "CREATE EXTENSION failed"; exit 1; }
