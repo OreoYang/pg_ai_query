@@ -8,11 +8,26 @@ include $(PGXS)
 
 #Build Rules
 BUILD_DIR = build
-all: pg_ai_query.dylib
 
-pg_ai_query.dylib: $(BUILD_DIR)/CMakeCache.txt
+# Determine extension suffix based on PostgreSQL version on macOS
+ifeq ($(shell uname),Darwin)
+    PG_VERSION := $(shell $(PG_CONFIG) --version | sed 's/PostgreSQL \([0-9]*\).*/\1/')
+    ifeq ($(shell test $(PG_VERSION) -ge 16; echo $$?),0)
+        EXT_SUFFIX := .dylib
+    else
+        EXT_SUFFIX := .so
+    endif
+else
+    EXT_SUFFIX := .so
+endif
+
+TARGET_LIB := pg_ai_query$(EXT_SUFFIX)
+
+all: $(TARGET_LIB)
+
+$(TARGET_LIB): $(BUILD_DIR)/CMakeCache.txt
 	$(MAKE) -C $(BUILD_DIR)
-	cp $(BUILD_DIR)/pg_ai_query.dylib .
+	cp $(BUILD_DIR)/$(TARGET_LIB) .
 
 $(BUILD_DIR)/CMakeCache.txt:
 	mkdir -p $(BUILD_DIR)

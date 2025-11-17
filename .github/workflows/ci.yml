@@ -120,9 +120,14 @@ jobs:
           echo "PostgreSQL pkglibdir: $PG_PKGLIB"
           echo "PostgreSQL libdir: $PG_LIBDIR"
           echo "PostgreSQL sharedir: $PG_SHAREDIR"
-          # Use correct extension based on OS
+          # Use correct extension based on OS and PostgreSQL version
           if [[ "${{ matrix.os }}" == "macos-latest" ]]; then
-            EXTENSION_PATH="$PG_PKGLIB/pg_ai_query.dylib"
+            # PostgreSQL 16+ on macOS uses .dylib, earlier versions use .so
+            if [[ "${{ matrix.pg_version }}" -ge 16 ]]; then
+              EXTENSION_PATH="$PG_PKGLIB/pg_ai_query.dylib"
+            else
+              EXTENSION_PATH="$PG_PKGLIB/pg_ai_query.so"
+            fi
           else
             EXTENSION_PATH="$PG_PKGLIB/pg_ai_query.so"
           fi

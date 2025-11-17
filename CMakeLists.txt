@@ -42,13 +42,25 @@ set(SOURCES
 )
 
 # Create module library for PostgreSQL extension
+# Get PostgreSQL version for extension naming
+execute_process(COMMAND ${PG_CONFIG} --version OUTPUT_VARIABLE PG_VERSION_OUTPUT OUTPUT_STRIP_TRAILING_WHITESPACE)
+string(REGEX MATCH "PostgreSQL ([0-9]+)" PG_VERSION_MATCH ${PG_VERSION_OUTPUT})
+set(PG_MAJOR_VERSION ${CMAKE_MATCH_1})
+
 if(APPLE)
     add_library(pg_ai_query MODULE ${SOURCES})
+    # PostgreSQL 16+ on macOS expects .dylib, earlier versions expect .so
+    if(PG_MAJOR_VERSION GREATER_EQUAL 16)
+        set(PG_EXTENSION_SUFFIX ".dylib")
+    else()
+        set(PG_EXTENSION_SUFFIX ".so")
+    endif()
     set_target_properties(pg_ai_query PROPERTIES
         PREFIX ""
-        SUFFIX ".dylib"
+        SUFFIX ${PG_EXTENSION_SUFFIX}
         LINK_FLAGS "-bundle_loader ${PG_BINDIR}/postgres"
     )
+    message(STATUS "Building PostgreSQL ${PG_MAJOR_VERSION} extension with suffix: ${PG_EXTENSION_SUFFIX}")
 else()
     add_library(pg_ai_query SHARED ${SOURCES})
     set_target_properties(pg_ai_query PROPERTIES
