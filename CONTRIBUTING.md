@@ -398,7 +398,7 @@ The release workflow builds artifacts for:
 
 | Platform | PostgreSQL Versions |
 |----------|---------------------|
-| Ubuntu 24.04 | 14, 15, 16, 17, 18 |
+| Linux (x86_64) | 14, 15, 16, 17, 18 |
 | macOS (latest) | 14, 15, 16, 17, 18 |
 
 Each artifact is a `.tar.gz` containing:

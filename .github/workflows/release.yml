@@ -107,19 +107,19 @@ jobs:
         include:
           - os: ubuntu-24.04
             pg_version: "14"
-            platform_name: "ubuntu-24.04-pg14"
+            platform_name: "linux-x86_64-pg14"
           - os: ubuntu-24.04
             pg_version: "15"
-            platform_name: "ubuntu-24.04-pg15"
+            platform_name: "linux-x86_64-pg15"
           - os: ubuntu-24.04
             pg_version: "16"
-            platform_name: "ubuntu-24.04-pg16"
+            platform_name: "linux-x86_64-pg16"
           - os: ubuntu-24.04
             pg_version: "17"
-            platform_name: "ubuntu-24.04-pg17"
+            platform_name: "linux-x86_64-pg17"
           - os: ubuntu-24.04
             pg_version: "18"
-            platform_name: "ubuntu-24.04-pg18"
+            platform_name: "linux-x86_64-pg18"
           - os: macos-latest
             pg_version: "14"
             platform_name: "macos-latest-pg14"
@@ -382,11 +382,11 @@ jobs:
 
         | Platform | PostgreSQL | File |
         |----------|------------|------|
-        | Ubuntu 24.04 | 14 | \`pg_ai_query-${VERSION}-ubuntu-24.04-pg14.tar.gz\` |
-        | Ubuntu 24.04 | 15 | \`pg_ai_query-${VERSION}-ubuntu-24.04-pg15.tar.gz\` |
-        | Ubuntu 24.04 | 16 | \`pg_ai_query-${VERSION}-ubuntu-24.04-pg16.tar.gz\` |
-        | Ubuntu 24.04 | 17 | \`pg_ai_query-${VERSION}-ubuntu-24.04-pg17.tar.gz\` |
-        | Ubuntu 24.04 | 18 | \`pg_ai_query-${VERSION}-ubuntu-24.04-pg18.tar.gz\` |
+        | Linux (x86_64) | 14 | \`pg_ai_query-${VERSION}-linux-x86_64-pg14.tar.gz\` |
+        | Linux (x86_64) | 15 | \`pg_ai_query-${VERSION}-linux-x86_64-pg15.tar.gz\` |
+        | Linux (x86_64) | 16 | \`pg_ai_query-${VERSION}-linux-x86_64-pg16.tar.gz\` |
+        | Linux (x86_64) | 17 | \`pg_ai_query-${VERSION}-linux-x86_64-pg17.tar.gz\` |
+        | Linux (x86_64) | 18 | \`pg_ai_query-${VERSION}-linux-x86_64-pg18.tar.gz\` |
         | macOS (latest) | 14 | \`pg_ai_query-${VERSION}-macos-latest-pg14.tar.gz\` |
         | macOS (latest) | 15 | \`pg_ai_query-${VERSION}-macos-latest-pg15.tar.gz\` |
         | macOS (latest) | 16 | \`pg_ai_query-${VERSION}-macos-latest-pg16.tar.gz\` |
