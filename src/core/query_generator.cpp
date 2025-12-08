@@ -44,62 +44,7 @@ QueryResult QueryGenerator::generateQuery(const QueryRequest& request) {
           .error_message = "Natural language query cannot be empty"};
     }
 
-    // Handle Gemini separately as it's not yet integrated into ProviderSelector
-    if (request.provider == config::constants::PROVIDER_GEMINI) {
-      const config::ProviderConfig* gemini_config =
-          config::ConfigManager::getProviderConfig(config::Provider::GEMINI);
-      std::string api_key = request.api_key;
-
-      if (api_key.empty() && gemini_config && !gemini_config->api_key.empty()) {
-        api_key = gemini_config->api_key;
-        logger::Logger::info("Using Gemini API key from configuration");
-      }
-
-      if (api_key.empty()) {
-        return QueryResult{.generated_query = "",
-                           .explanation = "",
-                           .warnings = {},
-                           .row_limit_applied = false,
-                           .suggested_visualization = "",
-                           .success = false,
-                           .error_message =
-                               "Gemini API key required. Pass as parameter or "
-                               "set in ~/.pg_ai.config."};
-      }
-
-      std::string model_name =
-          (gemini_config && !gemini_config->default_model.empty())
-              ? gemini_config->default_model
-              : "gemini-2.5-flash";
-      logger::Logger::info("Using Gemini model: " + model_name);
-
-      std::string system_prompt = prompts::SYSTEM_PROMPT;
-      std::string prompt = buildPrompt(request);
-
-      gemini::GeminiClient gemini_client(api_key);
-      gemini::GeminiRequest gemini_request{
-          .model = model_name,
-          .system_prompt = system_prompt,
-          .user_prompt = prompt,
-          .temperature = gemini_config ? std::optional<double>(
-                                             gemini_config->default_temperature)
-                                       : std::nullopt,
-          .max_tokens = gemini_config ? std::optional<int>(
-                                            gemini_config->default_max_tokens)
-                                      : std::nullopt};
-
-      auto gemini_result = gemini_client.generate_text(gemini_request);
-
-      if (!gemini_result.success) {
-        return QueryResult{.success = false,
-                           .error_message = "Gemini API error: " +
-                                            gemini_result.error_message};
-      }
-
-      return QueryParser::parseQueryResponse(gemini_result.text);
-    }
-
-    // Use ProviderSelector for OpenAI and Anthropic
+    // Use ProviderSelector to determine the provider
     auto selection =
         ProviderSelector::selectProvider(request.api_key, request.provider);
 
@@ -113,6 +58,43 @@ QueryResult QueryGenerator::generateQuery(const QueryRequest& request) {
                          .error_message = selection.error_message};
     }
 
+    // Handle Gemini separately as it uses a different client
+    if (selection.provider == config::Provider::GEMINI) {
+      std::string model_name =
+          (selection.config && !selection.config->default_model.empty())
+              ? selection.config->default_model
+              : "gemini-2.5-flash";
+      logger::Logger::info("Using Gemini model: " + model_name);
+
+      std::string system_prompt = prompts::SYSTEM_PROMPT;
+      std::string prompt = buildPrompt(request);
+
+      gemini::GeminiClient gemini_client(selection.api_key);
+      gemini::GeminiRequest gemini_request{
+          .model = model_name,
+          .system_prompt = system_prompt,
+          .user_prompt = prompt,
+          .temperature =
+              selection.config
+                  ? std::optional<double>(selection.config->default_temperature)
+                  : std::nullopt,
+          .max_tokens =
+              selection.config
+                  ? std::optional<int>(selection.config->default_max_tokens)
+                  : std::nullopt};
+
+      auto gemini_result = gemini_client.generate_text(gemini_request);
+
+      if (!gemini_result.success) {
+        return QueryResult{.success = false,
+                           .error_message = "Gemini API error: " +
+                                            gemini_result.error_message};
+      }
+
+      return QueryParser::parseQueryResponse(gemini_result.text);
+    }
+
+    // Use AIClientFactory for OpenAI and Anthropic
     auto client_result = AIClientFactory::createClient(
         selection.provider, selection.api_key, selection.config);
 
@@ -590,6 +572,51 @@ ExplainResult QueryGenerator::explainQuery(const ExplainRequest& request) {
       return result;
     }
 
+    std::string prompt =
+        "Please analyze this PostgreSQL EXPLAIN ANALYZE output:\n\nQuery:\n" +
+        request.query_text + "\n\nEXPLAIN Output:\n" + result.explain_output;
+
+    // Handle Gemini separately as it uses a different client
+    if (selection.provider == config::Provider::GEMINI) {
+      std::string model_name =
+          (selection.config && !selection.config->default_model.empty())
+              ? selection.config->default_model
+              : "gemini-2.5-flash";
+      logger::Logger::info("Using Gemini model for explain: " + model_name);
+
+      gemini::GeminiClient gemini_client(selection.api_key);
+      gemini::GeminiRequest gemini_request{
+          .model = model_name,
+          .system_prompt = prompts::EXPLAIN_SYSTEM_PROMPT,
+          .user_prompt = prompt,
+          .temperature =
+              selection.config
+                  ? std::optional<double>(selection.config->default_temperature)
+                  : std::nullopt,
+          .max_tokens =
+              selection.config
+                  ? std::optional<int>(selection.config->default_max_tokens)
+                  : std::nullopt};
+
+      auto gemini_result = gemini_client.generate_text(gemini_request);
+
+      if (!gemini_result.success) {
+        result.error_message =
+            "Gemini API error: " + gemini_result.error_message;
+        return result;
+      }
+
+      if (gemini_result.text.empty()) {
+        result.error_message = "Empty response from Gemini service";
+        return result;
+      }
+
+      result.ai_explanation = gemini_result.text;
+      result.success = true;
+      return result;
+    }
+
+    // Use AIClientFactory for OpenAI and Anthropic
     auto client_result = AIClientFactory::createClient(
         selection.provider, selection.api_key, selection.config);
 
@@ -597,10 +624,6 @@ ExplainResult QueryGenerator::explainQuery(const ExplainRequest& request) {
       result.error_message = client_result.error_message;
       return result;
     }
-
-    std::string prompt =
-        "Please analyze this PostgreSQL EXPLAIN ANALYZE output:\n\nQuery:\n" +
-        request.query_text + "\n\nEXPLAIN Output:\n" + result.explain_output;
 
     ai::GenerateOptions options(client_result.model_name,
                                 prompts::EXPLAIN_SYSTEM_PROMPT, prompt);
