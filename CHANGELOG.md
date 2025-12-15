@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.1.1] - 2025-12-15
+
+### Fixed
+
+#### Build System
+- Fix LLVM bitcode build error on PostgreSQL 18+ ([#30](https://github.com/benodiwal/pg_ai_query/pull/30))
+- Fix `make install` not installing shared library ([#31](https://github.com/benodiwal/pg_ai_query/pull/31), [#37](https://github.com/benodiwal/pg_ai_query/pull/37))
+- Fix `make clean` not removing extension files from root directory ([#35](https://github.com/benodiwal/pg_ai_query/pull/35))
+
+#### Configuration
+- Fix config parser including inline comments with field values ([#28](https://github.com/benodiwal/pg_ai_query/pull/28))
+
+### Changed
+
+#### CI/CD
+- Pin GitHub Actions to commit SHAs for supply chain security ([#32](https://github.com/benodiwal/pg_ai_query/pull/32), [#33](https://github.com/benodiwal/pg_ai_query/pull/33))
+- Add Makefile/PGXS build tests for PostgreSQL 16-18
+
+### Contributors
+
+Thanks to the following people for their contributions to this release:
+
+- [@reneleonhardt](https://github.com/reneleonhardt) - GitHub Actions security hardening
+- [@fvlnl](https://github.com/fvlnl) - Reported PostgreSQL 18 build issues ([#29](https://github.com/benodiwal/pg_ai_query/issues/29))
+
+---
+
 ## [v0.1.0] - 2025-12-09
 
 ### Added
@@ -99,5 +126,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+[v0.1.1]: https://github.com/benodiwal/pg_ai_query/compare/v0.1.0...v0.1.1
 [v0.1.0]: https://github.com/benodiwal/pg_ai_query/releases/tag/v0.1.0
 [v0.1.0-beta]: https://github.com/benodiwal/pg_ai_query/releases/tag/v0.1.0-beta
