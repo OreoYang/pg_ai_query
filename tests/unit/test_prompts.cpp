@@ -1,3 +1,4 @@
+#include <fstream>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
@@ -103,18 +104,34 @@ TEST_F(PromptsTest, GetExplainSystemPromptHandlesMultilinePrompts) {
 
 // Test that prompts loaded from files work correctly
 TEST_F(PromptsTest, GetSystemPromptLoadsFromFile) {
-  std::string config_path = getConfigFixture("prompts_from_files.ini");
+  // Create temporary prompt files
+  std::string fixtures_dir = getFixturesPath();
+  std::string prompts_dir = fixtures_dir + "/prompts";
 
-  // Change to the tests directory so relative paths work
-  auto old_path = std::filesystem::current_path();
-  std::filesystem::current_path("/home/highgo/works/repo/pg_ai_query/tests");
+  // Get absolute paths to prompt files
+  std::string system_prompt_path = prompts_dir + "/custom_system_prompt.txt";
 
-  ASSERT_TRUE(ConfigManager::loadConfig(config_path));
+  // Create a temporary config with absolute paths
+  TempConfigFile temp_config(R"(
+[general]
+log_level = INFO
+
+[openai]
+api_key = sk-test-files
+)");
+  // Append the prompts section with absolute path
+  std::string config_content = std::string(temp_config.path()) + "\n[prompts]\n";
+  config_content += "system_prompt = " + system_prompt_path + "\n";
+
+  // Write the updated config
+  std::ofstream out(std::filesystem::path(temp_config.path()), std::ios::app);
+  out << "[prompts]\n";
+  out << "system_prompt = " << system_prompt_path << "\n";
+  out.close();
+
+  ASSERT_TRUE(ConfigManager::loadConfig(temp_config.path()));
 
   std::string prompt = getSystemPrompt();
-
-  // Restore original path
-  std::filesystem::current_path(old_path);
 
   // Should return the prompt loaded from file
   EXPECT_FALSE(prompt.empty());
@@ -126,18 +143,31 @@ TEST_F(PromptsTest, GetSystemPromptLoadsFromFile) {
 
 // Test that explain prompts loaded from files work correctly
 TEST_F(PromptsTest, GetExplainSystemPromptLoadsFromFile) {
-  std::string config_path = getConfigFixture("prompts_from_files.ini");
+  // Create temporary prompt files
+  std::string fixtures_dir = getFixturesPath();
+  std::string prompts_dir = fixtures_dir + "/prompts";
 
-  // Change to the tests directory so relative paths work
-  auto old_path = std::filesystem::current_path();
-  std::filesystem::current_path("/home/highgo/works/repo/pg_ai_query/tests");
+  // Get absolute paths to prompt files
+  std::string explain_prompt_path = prompts_dir + "/custom_explain_prompt.txt";
 
-  ASSERT_TRUE(ConfigManager::loadConfig(config_path));
+  // Create a temporary config with absolute paths
+  TempConfigFile temp_config(R"(
+[general]
+log_level = INFO
+
+[openai]
+api_key = sk-test-files
+)");
+
+  // Append the prompts section with absolute path
+  std::ofstream out(std::filesystem::path(temp_config.path()), std::ios::app);
+  out << "[prompts]\n";
+  out << "explain_system_prompt = " << explain_prompt_path << "\n";
+  out.close();
+
+  ASSERT_TRUE(ConfigManager::loadConfig(temp_config.path()));
 
   std::string prompt = getExplainSystemPrompt();
-
-  // Restore original path
-  std::filesystem::current_path(old_path);
 
   // Should return the explain prompt loaded from file
   EXPECT_FALSE(prompt.empty());
