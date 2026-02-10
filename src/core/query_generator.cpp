@@ -66,7 +66,7 @@ QueryResult QueryGenerator::generateQuery(const QueryRequest& request) {
               : "gemini-2.5-flash";
       logger::Logger::info("Using Gemini model: " + model_name);
 
-      std::string system_prompt = prompts::SYSTEM_PROMPT;
+      std::string system_prompt = prompts::getSystemPrompt();
       std::string prompt = buildPrompt(request);
 
       gemini::GeminiClient gemini_client(selection.api_key);
@@ -110,7 +110,7 @@ QueryResult QueryGenerator::generateQuery(const QueryRequest& request) {
 
     std::string prompt = buildPrompt(request);
     ai::GenerateOptions options(client_result.model_name,
-                                prompts::SYSTEM_PROMPT, prompt);
+                                prompts::getSystemPrompt(), prompt);
 
     if (selection.config) {
       options.max_tokens = selection.config->default_max_tokens;
@@ -587,7 +587,7 @@ ExplainResult QueryGenerator::explainQuery(const ExplainRequest& request) {
       gemini::GeminiClient gemini_client(selection.api_key);
       gemini::GeminiRequest gemini_request{
           .model = model_name,
-          .system_prompt = prompts::EXPLAIN_SYSTEM_PROMPT,
+          .system_prompt = prompts::getExplainSystemPrompt(),
           .user_prompt = prompt,
           .temperature =
               selection.config
@@ -626,7 +626,7 @@ ExplainResult QueryGenerator::explainQuery(const ExplainRequest& request) {
     }
 
     ai::GenerateOptions options(client_result.model_name,
-                                prompts::EXPLAIN_SYSTEM_PROMPT, prompt);
+                                prompts::getExplainSystemPrompt(), prompt);
 
     if (selection.config) {
       options.max_tokens = selection.config->default_max_tokens;
